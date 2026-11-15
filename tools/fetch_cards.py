@@ -8,6 +8,7 @@ import os
 import re
 import sys
 import time
+import urllib.error
 import urllib.parse
 import urllib.request
 
@@ -38,6 +39,21 @@ def api(params):
     req = urllib.request.Request(API + "?" + urllib.parse.urlencode(params), headers={"User-Agent": UA})
     with urllib.request.urlopen(req, timeout=60) as r:
         return json.load(r)
+
+
+def download(url):
+    """429(アクセスが多すぎる)が返ったら、待ってからやり直す"""
+    for attempt in range(8):
+        req = urllib.request.Request(url, headers={"User-Agent": UA})
+        try:
+            with urllib.request.urlopen(req, timeout=60) as r:
+                return r.read()
+        except urllib.error.HTTPError as e:
+            if e.code not in (429, 503) or attempt == 7:
+                raise
+            wait = int(e.headers.get("Retry-After") or 0) or 10 * (attempt + 1)
+            print(f"  混んでいるので {wait} 秒待ちます")
+            time.sleep(wait)
 
 
 def list_titles():
@@ -105,9 +121,7 @@ def main():
             if not ii:
                 print("情報なし:", title)
                 continue
-            req = urllib.request.Request(ii["url"], headers={"User-Agent": UA})
-            with urllib.request.urlopen(req, timeout=60) as r:
-                body = r.read()
+            body = download(ii["url"])
             with open(os.path.join(OUT, cid + ".svg"), "wb") as f:
                 f.write(body)
             meta = ii.get("extmetadata", {})
@@ -121,7 +135,7 @@ def main():
                 "licenseUrl": meta.get("LicenseUrl", {}).get("value"),
             })
             print("保存:", cid, "<-", title)
-            time.sleep(0.2)
+            time.sleep(2)  # Wikimedia に怒られないように間をあける
 
     with open(os.path.join(OUT, "credits.json"), "w", encoding="utf-8") as f:
         json.dump(credits, f, ensure_ascii=False, indent=1)

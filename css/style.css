@@ -154,10 +154,10 @@ h1, h2, h3 { font-family: var(--serif); font-weight: 800; margin: 0; }
   font-size: calc(var(--s, 44px) * .45);
 }
 body.imgs .icon { color: transparent; }
-.icon.ino   { background-size: 240%; background-position: 50% 60%; }
-.icon.shika { background-size: 240%; background-position: 45% 55%; }
-.icon.cho   { background-size: 260%; background-position: 50% 30%; }
-.icon.tsuru { background-size: 230%; background-position: 50% 40%; }
+.icon.ino   { background-size: 200%; background-position: 16% 70%; background-color: #fff; }
+.icon.shika { background-size: 230%; background-position: 36% 36%; background-color: #fff; }
+.icon.cho   { background-size: 200%; background-position: 54% 21%; background-color: #fff; }
+.icon.tsuru { background-size: 200%; background-position: 26% 36%; background-color: #fff; }
 .icon-pick { display: flex; gap: 14px; justify-content: center; }
 .icon-pick button { background: none; border: 0; padding: 4px; border-radius: 50%; }
 .icon-pick button.on .icon { border-color: var(--shu); box-shadow: 0 0 0 3px var(--shu); }

@@ -617,10 +617,10 @@ function renderGame(s) {
 
   const hand = sortCards(s.hands[me]);
   const n = hand.length;
-  const spread = Math.min(30, n * 4);
+  const spread = Math.min(22, n * 3);
   const handHTML = hand.map((id, i) => {
     const a = n > 1 ? -spread / 2 + (spread * i) / (n - 1) : 0;
-    const k = (i - (n - 1) / 2) * (n > 6 ? 0.46 : 0.6);
+    const k = (i - (n - 1) / 2) * (n > 6 ? 0.4 : 0.56);
     const sel = G.sel === id || (G.choose && G.choose.card === id);
     const lift = sel ? ' translateY(-22px) scale(1.14)' : '';
     const glow = prefs.highlight && myTurnPlay && s.field.some((f) => CARD[f].month === CARD[id].month) ? 'glow' : '';

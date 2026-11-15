@@ -1,0 +1,25 @@
+name: 札の画像を取ってくる
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  fetch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Wikimedia Commons から SVG を保存
+        run: python tools/fetch_cards.py
+      - name: リポジトリに入れる
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898283+github-actions[bot]@users.noreply.github.com"
+          git add images/cards
+          git diff --cached --quiet || git commit -m "札の画像を追加(Wikimedia Commons, CC BY-SA)"
+          git push

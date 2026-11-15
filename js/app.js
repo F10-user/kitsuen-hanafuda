@@ -276,8 +276,8 @@ function showRoomSettings(mode) {
           <h3>対局の長さ</h3>
           <div class="choices">${[1, 3, 6, 12].map((m) => `<button data-m="${m}" class="${st.months === m ? 'on' : ''}">${m}ヶ月</button>`).join('')}</div>
           <div class="setting-row" style="margin-top:6px">
-            <label>月見花見の独自ルール<small>ふだん1点。他の役が2点以上あれば5点</small></label>
-            <button class="toggle ${st.sakeRule ? 'on' : ''}" id="sake" aria-label="月見花見ルール"></button>
+            <label>小野木戸口ルール(月見花見)<small>ふだん1点。他の役が2点以上あれば5点</small></label>
+            <button class="toggle ${st.sakeRule ? 'on' : ''}" id="sake" aria-label="小野木戸口ルール"></button>
           </div>
         </div>
         <button class="btn shu" id="go">${mode === 'cpu' ? '対局開始' : '部屋を作る'}</button>

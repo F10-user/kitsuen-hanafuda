@@ -49,7 +49,7 @@
 | `index.html` | 入口 |
 | `css/style.css` | 見た目 |
 | `js/cards.js` | 48枚の札のデータ |
-| `js/scoring.js` | 役と点数の計算(独自ルール込み) |
+| `js/scoring.js` | 役と点数の計算(小野木戸口ルール込み) |
 | `js/engine.js` | 配札・手番・こいこい・月の進行 |
 | `js/cpu.js` | CPUの考え方 |
 | `js/online.js` | Supabase(ログイン・部屋・同期・戦績) |

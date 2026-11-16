@@ -480,6 +480,12 @@ function onRoomRow(row) {
   }
   enqueue(async () => {
     if (!G.state || row.state.seq > G.state.seq) {
+      if (row.state.phase === 'dice' && G.state && G.state.phase === 'gameEnd') {
+        // 相手が再戦を始めた(自分が書いた再戦の知らせなら、もう始めているので何もしない)
+        if (G.rematching) return;
+        await startRematch(row.state);
+        return;
+      }
       if (row.state.phase === 'dice' && (!G.state || G.state.phase === 'dice')) {
         G.state = row.state;
         await runDice(row.state);
@@ -916,11 +922,39 @@ function afterState(s) {
   if (G.mode === 'online' && G.me === 0 && s.phase === 'roundEnd' && s.ready[0] && s.ready[1]) {
     setTimeout(() => act((st) => E.nextRound(st)), 300);
   }
-  if (G.mode === 'online' && s.phase === 'gameEnd' && G.me === 0 && !G.saved) {
+  if (G.mode === 'online' && s.phase === 'gameEnd' && !G.saved) {
+    // 二人とも保存を試みる(同じ対局は1件しか入らない)
     G.saved = true;
     O.saveMatch(G.room, s, [G.room.host_id, G.room.guest_id]).catch((e) => toast('戦績を保存できませんでした: ' + e.message));
-    O.closeRoom({ id: G.room.id }).catch(() => {});
+    if (G.me === 0) O.closeRoom({ id: G.room.id }).catch(() => {});
   }
+  if (G.mode === 'online' && s.phase === 'gameEnd' && G.me === 0 && s.rematch && s.rematch[0] && s.rematch[1]) {
+    hostRematch(s);
+  }
+}
+
+// 再戦: 親(部屋を作った人)が新しい対局を書き込み、二人ともサイコロから始める
+async function hostRematch(s) {
+  if (G.rematching) return;
+  G.rematching = true;
+  const ns = E.rematchGame(s, E.rollDice());
+  let row = null;
+  try { row = await O.writeState(G.room, ns, { status: 'playing' }); } catch (e) { toast('再戦を始められませんでした: ' + e.message); }
+  if (!row) { G.rematching = false; return; }
+  G.room = row;
+  const started = startRematch(ns); // ここで G.state が新しい対局になる
+  G.rematching = false;
+  await started;
+}
+
+async function startRematch(ns) {
+  G.state = ns;
+  G.saved = false;
+  G.sel = null;
+  G.choose = null;
+  closeOverlay();
+  await runDice(ns);
+  if (G.me === 0) hostDeal();
 }
 
 // ---------------------------------------------------------------- 対局中のタップ
@@ -1200,14 +1234,44 @@ function showFinal(s) {
     ${diffText(s)}
     <div class="flow">${flowHTML(s.history, me, s.names)}</div>
     ${G.mode === 'cpu' ? '<p style="font-size:12px;color:var(--ink-soft);text-align:center;margin:0">CPU対戦は戦績に残りません</p>' : ''}
-    <button class="btn shu" style="margin-top:14px" id="home">メニューへ</button>
+    ${rematchHTML(s)}
+    <button class="btn ghost" style="margin-top:10px;color:var(--ink);box-shadow:inset 0 0 0 2px var(--ink)" id="home">メニューへ</button>
   </div>`, { dismiss: false });
-  $('#home').onclick = () => {
-    if (G.unsub) G.unsub();
-    G = null;
+  const rb = $('#rematch');
+  if (rb) {
+    rb.onclick = () => {
+      if (G.mode === 'cpu') {
+        const { settings } = G.state;
+        closeOverlay();
+        startCpuGame(settings);
+        return;
+      }
+      act((st) => E.requestRematch(st, me), { retry: true });
+    };
+  }
+  $('#home').onclick = async () => {
+    const g = G;
+    if (g.mode === 'online' && !(g.state.gone && g.state.gone[me])) {
+      // 相手が再戦を待ち続けないように、退出したことを伝える
+      await act((st) => E.leaveGame(st, me), { retry: true });
+    }
+    if (g.unsub) g.unsub();
+    if (G === g) G = null;
     closeOverlay();
     showMenu();
   };
+}
+
+function rematchHTML(s) {
+  const me = G.me;
+  const label = `再戦(${s.settings.months}ヶ月・同じルール)`;
+  if (G.mode === 'cpu') return `<button class="btn shu" style="margin-top:14px" id="rematch">${label}</button>`;
+  const gone = s.gone && s.gone[1 - me];
+  const mine = s.rematch && s.rematch[me];
+  const theirs = s.rematch && s.rematch[1 - me];
+  if (gone) return '<p class="rematch-note">相手はメニューに戻りました</p><button class="btn shu" style="margin-top:8px" disabled>再戦</button>';
+  if (mine) return `<p class="rematch-note">相手の返事を待っています…</p><button class="btn shu" style="margin-top:8px" disabled>${label}</button>`;
+  return `${theirs ? `<p class="rematch-note on">${esc(s.names[1 - me])}さんが再戦を希望しています</p>` : ''}<button class="btn shu" style="margin-top:${theirs ? 8 : 14}px" id="rematch">${label}</button>`;
 }
 
 // ---------------------------------------------------------------- 戦績

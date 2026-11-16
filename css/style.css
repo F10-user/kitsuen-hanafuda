@@ -440,3 +440,7 @@ input[type=range] { width: 120px; accent-color: var(--felt); }
   font-size: 14px; font-weight: 700; white-space: nowrap;
 }
 .peek-bar .btn.small { border-radius: 20px; font-size: 14px; }
+
+/* 再戦 */
+.rematch-note { margin: 14px 0 0; text-align: center; font-size: 13px; color: var(--ink-soft); }
+.rematch-note.on { color: var(--shu-dark); font-weight: 700; }

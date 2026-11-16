@@ -118,7 +118,7 @@ export function subscribeRoom(id, onChange) {
 
 export async function saveMatch(room, state, playerIds) {
   const row = {
-    room_id: room.id,
+    room_id: state.gameId || room.id, // 再戦しても対局ごとに1件ずつ残る
     player0: playerIds[0],
     player1: playerIds[1],
     names: state.names,

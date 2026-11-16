@@ -31,9 +31,18 @@ export function oyaFromDice(dice) {
   return dice % 2 === 0 ? 0 : 1;
 }
 
+function uuid() {
+  if (globalThis.crypto && globalThis.crypto.randomUUID) return globalThis.crypto.randomUUID();
+  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c) => {
+    const r = Math.floor(Math.random() * 16);
+    return (c === 'x' ? r : (r % 4) + 8).toString(16);
+  });
+}
+
 export function newGame(settings, dice, names = ['あなた', '相手'], icons = ['tsuru', 'ino']) {
   return {
     v: 1,
+    gameId: uuid(), // 戦績を対局ごとに1件ずつ残すための番号
     seq: 0,
     settings: { ...DEFAULT_SETTINGS, ...settings },
     names,
@@ -307,6 +316,37 @@ export function answerQuit(state, p, accept) {
   s.quit = { by: state.quit.by, accepted: true };
   s.pending = null;
   s.events = [{ type: 'quitAccepted', p }];
+  return s;
+}
+
+// 全部の月が終わったあとの再戦。二人とも希望したら、同じ設定で新しい対局を始める。
+export function requestRematch(state, p) {
+  if (state.phase !== 'gameEnd') throw new Error('まだ対局中です');
+  if (state.gone && state.gone[1 - p]) throw new Error('相手はメニューに戻りました');
+  const s = clone(state);
+  s.rematch = [...(s.rematch || [false, false])];
+  s.rematch[p] = true;
+  s.seq += 1;
+  s.events = [{ type: 'rematch', p }];
+  return s;
+}
+
+// 最終結果からメニューに戻った(相手の再戦待ちを止めるため)
+export function leaveGame(state, p) {
+  const s = clone(state);
+  s.gone = [...(s.gone || [false, false])];
+  s.gone[p] = true;
+  if (s.rematch) s.rematch[p] = false;
+  s.seq += 1;
+  s.events = [{ type: 'left', p }];
+  return s;
+}
+
+// 再戦の新しい対局。seq は前の対局から続ける(相手の画面が古い状態と取り違えないように)
+export function rematchGame(state, dice) {
+  const s = newGame(state.settings, dice, state.names, state.icons);
+  s.seq = state.seq + 1;
+  s.events = [{ type: 'rematchStart' }];
   return s;
 }
 

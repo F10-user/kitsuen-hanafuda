@@ -32,3 +32,22 @@ let a = E.answerQuit(E.requestQuit(d, t), 1 - t, true);
 assert.equal(a.phase, 'aborted');
 assert.equal(a.history.length, 0);
 console.log('quit ok');
+
+// 再戦
+{
+  let g = E.newGame({ months: 1 }, 3, ['A', 'B']);
+  assert.match(g.gameId, /^[0-9a-f-]{36}$/);
+  g.phase = 'gameEnd';
+  assert.throws(() => E.requestRematch({ ...g, phase: 'play' }, 0), /対局中/);
+  let r = E.requestRematch(g, 0);
+  r = E.requestRematch(r, 1);
+  assert.deepEqual(r.rematch, [true, true]);
+  const n = E.rematchGame(r, 4);
+  assert.equal(n.phase, 'dice');
+  assert.ok(n.seq > r.seq);
+  assert.notEqual(n.gameId, g.gameId);
+  assert.deepEqual(n.names, ['A', 'B']);
+  const left = E.leaveGame(E.requestRematch(g, 0), 1);
+  assert.throws(() => E.requestRematch(left, 0), /メニューに戻りました/);
+  console.log('rematch ok');
+}

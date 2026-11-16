@@ -72,10 +72,11 @@ function show(html) {
   window.scrollTo(0, 0);
 }
 function openOverlay(html, { dismiss = true } = {}) {
+  overlayEl.classList.remove('peek');
   overlayEl.innerHTML = `<div class="ov-bg"></div>${html}`;
   if (dismiss) $('.ov-bg', overlayEl).onclick = closeOverlay;
 }
-function closeOverlay() { overlayEl.innerHTML = ''; }
+function closeOverlay() { overlayEl.classList.remove('peek'); overlayEl.innerHTML = ''; }
 
 function pageHead(title, back) {
   return `<div class="page-head"><button class="back" data-back aria-label="戻る">‹</button><h2>${title}</h2></div>`;
@@ -892,6 +893,9 @@ async function applyState(next) {
 // いまの状態に合った画面(こいこい・リザルトなど)を重ねる
 function showPhaseModal(s, opts = {}) {
   const me = G.me;
+  // 場を見ている途中なら、月の結果のあいだはそのまま見せておく
+  const asked = s.quit && !s.quit.accepted && s.quit.by !== me;
+  if (overlayEl.classList.contains('peek') && s.phase === 'roundEnd' && !asked) return;
   if (s.phase === 'aborted') showAborted(s);
   else if (s.quit && !s.quit.accepted && s.quit.by !== me) showQuitAsk(s);
   else if (s.phase === 'koikoi' && s.turn === me) showKoikoiModal(s, opts);
@@ -928,7 +932,7 @@ screenEl.addEventListener('click', (e) => {
   if (e.target.closest('[data-quit]')) return onQuit();
 
   const capt = e.target.closest('.capt');
-  if (capt) return showCaptured(Number(capt.dataset.capt));
+  if (capt) return showCaptured(Number(capt.dataset.capt), s.phase === 'roundEnd' ? peekBoard : null);
 
   if (s.phase === 'draw' && s.turn === me && e.target.closest('.deck-zone, .banner')) {
     S.pachi(0.4);
@@ -1116,6 +1120,19 @@ function showKoikoiModal(s, { sound = true } = {}) {
   $('#agari').onclick = () => { closeOverlay(); act((st) => E.decide(st, me, 'agari')); };
 }
 
+// リザルトを一度どけて、終わった時点の場をそのまま見せる
+function peekBoard() {
+  const s = G.state;
+  if (s.phase !== 'roundEnd') return;
+  renderGame(s);
+  overlayEl.classList.add('peek');
+  overlayEl.innerHTML = `<div class="peek-bar"><span>${s.month}月の終わりの場</span><button class="btn shu small" id="peek-back">結果に戻る</button></div>`;
+  $('#peek-back').onclick = () => {
+    if (G && G.state && G.state.phase === 'roundEnd') showRoundResult(G.state);
+    else if (G && G.state) showPhaseModal(G.state);
+  };
+}
+
 function diffText(s) {
   const me = G.me;
   const d = s.scores[me] - s.scores[1 - me];
@@ -1140,11 +1157,19 @@ function showRoundResult(s) {
     <table class="score-table" style="margin-top:8px"><tr><th></th><th>${esc(s.names[me])}</th><th>${esc(s.names[1 - me])}</th></tr>
       <tr><td>合計</td><td><b>${s.scores[me]}</b></td><td><b>${s.scores[1 - me]}</b></td></tr></table>
     ${diffText(s)}
+    <div class="look-row three">
+      <button id="look-field">場を見る</button>
+      <button id="look-me">自分の取り札</button>
+      <button id="look-op">相手の取り札</button>
+    </div>
     <button class="btn shu" style="margin-top:14px" id="next" ${waiting ? 'disabled' : ''}>${waiting ? '相手を待っています…' : last ? '最終結果へ' : '次の月へ'}</button>
     ${last ? '' : '<button class="text-btn" id="quit2">ここで中断する</button>'}
   </div>`, { dismiss: false });
   const q2 = $('#quit2');
   if (q2) q2.onclick = onQuit;
+  $('#look-field').onclick = peekBoard;
+  $('#look-me').onclick = () => showCaptured(me, () => showRoundResult(G.state));
+  $('#look-op').onclick = () => showCaptured(1 - me, () => showRoundResult(G.state));
   $('#next').onclick = () => {
     if (G.mode === 'cpu') { closeOverlay(); enqueue(() => applyState(E.nextRound(G.state))); return; }
     act((st) => E.setReady(st, me), { retry: true });

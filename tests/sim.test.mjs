@@ -5,11 +5,13 @@ import assert from 'node:assert/strict';
 
 function randomBot(s, p) {
   if (s.phase === 'play') { const id = s.hands[p][Math.floor(Math.random()*s.hands[p].length)]; const o = E.fieldOptions(s,id); return E.playCard(s,p,id,o.length===2?o[0]:null); }
+  if (s.phase === 'draw') return E.drawCard(s,p);
   if (s.phase === 'chooseDraw') return E.chooseDraw(s,p,s.pending.options[0]);
   if (s.phase === 'koikoi') return E.decide(s,p,'agari');
 }
 function cpuBot(s, p) {
   if (s.phase === 'play') { const m = CPU.choosePlay(s,p); return E.playCard(s,p,m.card,m.target); }
+  if (s.phase === 'draw') return E.drawCard(s,p);
   if (s.phase === 'chooseDraw') return E.chooseDraw(s,p,CPU.chooseDrawTarget(s,p));
   if (s.phase === 'koikoi') return E.decide(s,p,CPU.chooseKoikoi(s,p));
 }

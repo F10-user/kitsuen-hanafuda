@@ -163,17 +163,27 @@ export function playCard(state, p, id, target) {
   const took = takeFromField(s, p, id, target);
   s.seq += 1;
   s.events = [{ type: 'play', p, card: id, took }];
+  // 続けて山札を引く(本人がタップして引く)
+  s.phase = 'draw';
+  return s;
+}
 
+// 山札から1枚めくる
+export function drawCard(state, p) {
+  if (state.quit) throw new Error('中断の返事を待っています');
+  if (state.phase !== 'draw' || state.turn !== p) throw new Error('いまは引けません');
+  const s = clone(state);
+  s.seq += 1;
   const drawn = s.deck.shift();
   const m = matchesOf(s.field, drawn);
   if (m.length === 2) {
     s.phase = 'chooseDraw';
     s.pending = { drawn, options: m };
-    s.events.push({ type: 'reveal', p, card: drawn });
+    s.events = [{ type: 'reveal', p, card: drawn }];
     return s;
   }
-  const took2 = takeFromField(s, p, drawn, null);
-  s.events.push({ type: 'draw', p, card: drawn, took: took2 });
+  const took = takeFromField(s, p, drawn, null);
+  s.events = [{ type: 'draw', p, card: drawn, took }];
   return afterTurn(s, p);
 }
 

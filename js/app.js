@@ -422,7 +422,7 @@ function startCpuGame(settings) {
 function scheduleCpu() {
   const s = G.state;
   if (G.mode !== 'cpu' || s.turn !== 1 || G.lock) return;
-  if (!['play', 'chooseDraw', 'koikoi'].includes(s.phase)) return;
+  if (!['play', 'draw', 'chooseDraw', 'koikoi'].includes(s.phase)) return;
   clearTimeout(G.cpuTimer);
   const g = G;
   G.cpuTimer = setTimeout(() => {
@@ -434,6 +434,8 @@ function scheduleCpu() {
       if (st.phase === 'play') {
         const m = CPU.choosePlay(st, 1);
         next = E.playCard(st, 1, m.card, m.target);
+      } else if (st.phase === 'draw') {
+        next = E.drawCard(st, 1);
       } else if (st.phase === 'chooseDraw') {
         next = E.chooseDraw(st, 1, CPU.chooseDrawTarget(st, 1));
       } else if (st.phase === 'koikoi') {
@@ -441,7 +443,7 @@ function scheduleCpu() {
       } else return null;
       return applyState(next);
     });
-  }, s.phase === 'koikoi' ? 900 : 750);
+  }, s.phase === 'koikoi' ? 900 : s.phase === 'draw' ? 550 : 750);
 }
 
 // ---------------------------------------------------------------- オンライン対戦
@@ -594,13 +596,13 @@ async function runDice(state) {
 // ---------------------------------------------------------------- 対局画面の描画
 function capGroups(ids) {
   const groups = { hikari: [], tane: [], tanzaku: [], kasu: [] };
-  for (const id of sortCards(ids)) groups[CARD[id].type].push(id);
+  for (const id of ids) groups[CARD[id].type].push(id);
   return Object.entries(groups).filter(([, v]) => v.length)
     .map(([, v]) => `<div class="grp">${v.map((id) => cardHTML(id)).join('')}<em>${v.length}</em></div>`).join('');
 }
 
 const guideOn = (s) => s.settings.guide !== false;
-const QUIT_PHASES = ['play', 'chooseDraw', 'koikoi', 'roundEnd'];
+const QUIT_PHASES = ['play', 'draw', 'chooseDraw', 'koikoi', 'roundEnd'];
 
 function guideHTML(s, p) {
   if (!guideOn(s)) return '';
@@ -611,7 +613,7 @@ function guideHTML(s, p) {
 function pbarHTML(s, p) {
   const sc = scoreCaptured(s.captured[p], s.settings).total;
   const icons = s.icons || ['tsuru', 'ino'];
-  const myTurn = s.turn === p && ['play', 'chooseDraw', 'koikoi'].includes(s.phase);
+  const myTurn = s.turn === p && ['play', 'draw', 'chooseDraw', 'koikoi'].includes(s.phase);
   return `<div class="pbar">
     <span class="turn-dot ${myTurn ? 'on' : ''}"></span>${iconHTML(icons[p], 34)}
     <span class="nm">${esc(s.names[p])}</span>
@@ -626,6 +628,7 @@ function bannerText(s) {
   const me = G.me;
   if (s.quit && !s.quit.accepted) return s.quit.by === me ? '中断の返事を待っています…' : '中断が申請されています';
   if (G.choose) return '取る札を選んでください';
+  if (s.phase === 'draw') return s.turn === me ? '山札をタップして引く' : '相手が山札を引きます…';
   if (s.phase === 'chooseDraw') return s.turn === me ? 'めくった札で取る札を選んでください' : '相手が選んでいます…';
   if (s.phase === 'koikoi') return s.turn === me ? '' : '相手が考えています…';
   if (s.phase === 'play') {
@@ -673,7 +676,7 @@ function renderGame(s) {
       <div class="table">
         <div class="month-tag">${s.month}月 ${months <= 12 ? MONTH_PLANTS[s.month] : ''} ・ ${s.month}/${months}</div>
         <div class="deck-zone">
-          <div class="deck">${s.deck.length ? backHTML() + backHTML() + backHTML() : ''}</div>
+          <div class="deck ${s.phase === 'draw' && s.turn === me && !s.quit ? 'tap' : ''}">${s.deck.length ? backHTML() + backHTML() + backHTML() : ''}</div>
           <div class="deck-count">山 ${s.deck.length}</div>
           <div class="reveal-slot">${s.phase === 'chooseDraw' && s.pending ? cardHTML(s.pending.drawn, 'glow') : ''}</div>
         </div>
@@ -688,7 +691,7 @@ function renderGame(s) {
 }
 
 // 札の位置の変化をなめらかに見せる(FLIP)
-function flipRender(s, { fromOpp = [] } = {}) {
+function flipRender(s, { fromOpp = [], turnOver = [] } = {}) {
   const before = new Map();
   $$('.card[data-id]', screenEl).forEach((el) => before.set(el.dataset.id, el.getBoundingClientRect()));
   const deckEl = $('.deck', screenEl);
@@ -725,6 +728,15 @@ function flipRender(s, { fromOpp = [] } = {}) {
       [dx, dy] = [dx * Math.cos(a) - dy * Math.sin(a), dx * Math.sin(a) + dy * Math.cos(a)];
     }
     moved += 1;
+    if (!old && turnOver.includes(id)) {
+      // 山札から出てきながら、裏から表へ返る
+      el.animate([
+        { transform: `translate(${dx}px, ${dy}px) scale(${sc}) rotateY(180deg)`, transformOrigin: 'center', filter: 'brightness(.25)', zIndex: 50 },
+        { transform: `translate(${dx * 0.45}px, ${dy * 0.45}px) scale(${(sc + 1) / 2}) rotateY(90deg)`, transformOrigin: 'center', filter: 'brightness(.25)', zIndex: 50, offset: 0.45 },
+        { transform: 'none', transformOrigin: 'center', filter: 'none', zIndex: 50 },
+      ], { duration: 520, easing: 'cubic-bezier(.25,.7,.3,1)' });
+      return;
+    }
     el.animate([
       { transform: `translate(${dx}px, ${dy}px) scale(${sc})`, transformOrigin: 'top left', zIndex: 50 },
       { transform: 'none', transformOrigin: 'top left', zIndex: 50 },
@@ -749,11 +761,12 @@ function stageView(base, after, p, card, took) {
 }
 
 // 相手の札は1秒止める。自分の札は軽く見せるだけ。
-async function showTake(base, after, ev, fromOpp) {
+async function showTake(base, after, ev, fromOpp, turnOver = []) {
   const st = stageView(base, after, ev.p, ev.card, ev.took);
   if (!st) return false;
   G.flash = [ev.card, ...ev.took];
-  flipRender(st, { fromOpp });
+  flipRender(st, { fromOpp, turnOver });
+  if (turnOver.length) await sleep(380);
   S.pachi(0.9);
   await sleep(ev.p !== G.me ? 1000 : 400);
   G.flash = null;
@@ -836,11 +849,13 @@ async function applyState(next) {
     await sleep(draw || reveal ? (play.p !== me ? 700 : 520) : 360);
   }
   // 山札からめくった札
+  const drawn = draw ? [draw.card] : reveal ? [reveal.card] : [];
+  let shown = false;
   if (draw) {
     const base = play ? undoDraw(next, draw) : prev;
-    await showTake(base, next, draw, []);
+    shown = await showTake(base, next, draw, [], drawn);
   }
-  flipRender(next);
+  flipRender(next, { turnOver: shown ? [] : drawn });
   if (draw || reveal) {
     S.pachi(draw && draw.took.length ? 1.1 : 0.7);
     await sleep(draw && draw.p !== me ? 600 : 420);
@@ -914,6 +929,11 @@ screenEl.addEventListener('click', (e) => {
 
   const capt = e.target.closest('.capt');
   if (capt) return showCaptured(Number(capt.dataset.capt));
+
+  if (s.phase === 'draw' && s.turn === me && e.target.closest('.deck-zone, .banner')) {
+    S.pachi(0.4);
+    return act((st) => E.drawCard(st, me));
+  }
 
   const handCard = e.target.closest('.hand .card');
   if (handCard) {
@@ -1056,7 +1076,7 @@ function showAborted(s) {
 function showCaptured(p, back = null) {
   const s = G.state;
   const groups = { hikari: [], tane: [], tanzaku: [], kasu: [] };
-  for (const id of sortCards(s.captured[p])) groups[CARD[id].type].push(id);
+  for (const id of s.captured[p]) groups[CARD[id].type].push(id);
   const sc = scoreCaptured(s.captured[p], s.settings);
   const near = guideOn(s) ? nearYaku(s.captured[p], s.captured[1 - p]) : [];
   openOverlay(`<div class="modal capt-big">

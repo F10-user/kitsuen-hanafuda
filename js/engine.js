@@ -155,6 +155,7 @@ export function fieldOptions(state, id) {
 }
 
 export function playCard(state, p, id, target) {
+  if (state.quit) throw new Error('中断の返事を待っています');
   if (state.phase !== 'play' || state.turn !== p) throw new Error('あなたの番ではありません');
   const s = clone(state);
   if (!s.hands[p].includes(id)) throw new Error('その札は手札にありません');
@@ -177,6 +178,7 @@ export function playCard(state, p, id, target) {
 }
 
 export function chooseDraw(state, p, target) {
+  if (state.quit) throw new Error('中断の返事を待っています');
   if (state.phase !== 'chooseDraw' || state.turn !== p) throw new Error('選ぶ場面ではありません');
   const s = clone(state);
   const { drawn } = s.pending;
@@ -218,6 +220,7 @@ function nextTurn(s, p) {
 }
 
 export function decide(state, p, choice) {
+  if (state.quit) throw new Error('中断の返事を待っています');
   if (state.phase !== 'koikoi' || state.turn !== p) throw new Error('選ぶ場面ではありません');
   const s = clone(state);
   s.seq += 1;
@@ -244,6 +247,8 @@ function endRound(s, winner, { base, yaku, reason }) {
 }
 
 export function setReady(state, p) {
+  if (state.quit) throw new Error('中断の返事を待っています');
+  if (state.phase !== 'roundEnd') throw new Error('いまは次へ進めません');
   const s = clone(state);
   s.ready[p] = true;
   s.seq += 1;
@@ -253,6 +258,7 @@ export function setReady(state, p) {
 
 // 次の月へ。最後の月なら gameEnd。
 export function nextRound(state, rand = Math.random) {
+  if (state.quit) throw new Error('中断の返事を待っています');
   const s = clone(state);
   if (s.month >= s.settings.months) {
     s.phase = 'gameEnd';
@@ -263,6 +269,35 @@ export function nextRound(state, rand = Math.random) {
   s.month += 1;
   s.oya = s.result ? s.result.nextOya : s.oya;
   return startRound(s, rand);
+}
+
+// 中断の申請。相手が了承したら対局を終える。申請中は対局が止まる。
+export function requestQuit(state, p) {
+  if (['gameEnd', 'aborted', 'dice'].includes(state.phase)) throw new Error('いまは中断できません');
+  if (state.quit) throw new Error(state.quit.by === p ? '相手の返事を待っています' : '相手から中断の申請が来ています');
+  const s = clone(state);
+  s.quit = { by: p };
+  s.seq += 1;
+  s.events = [{ type: 'quitRequest', p }];
+  return s;
+}
+
+export function answerQuit(state, p, accept) {
+  if (!state.quit || state.quit.by === p) throw new Error('答える申請がありません');
+  const s = clone(state);
+  s.seq += 1;
+  if (!accept) {
+    s.quit = null;
+    s.events = [{ type: 'quitDeclined', p }];
+    return s;
+  }
+  // 終わった月までが結果。途中の月は数えない。
+  s.abortedPhase = s.phase;
+  s.phase = 'aborted';
+  s.quit = { by: state.quit.by, accepted: true };
+  s.pending = null;
+  s.events = [{ type: 'quitAccepted', p }];
+  return s;
 }
 
 // 見えていない札(相手の手札か山札のどちらか)

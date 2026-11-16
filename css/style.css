@@ -221,7 +221,8 @@ input[type=range] { width: 120px; accent-color: var(--felt); }
 .game {
   height: 100dvh;
   display: grid;
-  grid-template-rows: auto auto auto 1fr auto auto auto;
+  grid-template-rows: auto auto auto 1fr auto auto auto auto;
+  grid-template-columns: minmax(0, 1fr);
   padding: calc(env(safe-area-inset-top) + 6px) 0 calc(env(safe-area-inset-bottom) + 4px);
   margin: 0 -16px;
   overflow: hidden;
@@ -244,6 +245,7 @@ input[type=range] { width: 120px; accent-color: var(--felt); }
 .capt {
   display: flex; gap: 6px; padding: 4px 10px; min-height: calc(var(--sw) * 1.62 + 12px);
   align-items: flex-start; cursor: pointer;
+  min-width: 0; overflow: hidden;
   background: rgba(0,0,0,.14);
   border-top: 1px solid rgba(255,255,255,.06); border-bottom: 1px solid rgba(0,0,0,.2);
 }
@@ -271,7 +273,7 @@ input[type=range] { width: 120px; accent-color: var(--felt); }
   font-family: var(--serif); font-size: 13px; opacity: .8; letter-spacing: .08em;
 }
 .banner {
-  position: absolute; left: 50%; bottom: -8px; transform: translateX(-50%);
+  position: absolute; left: 50%; bottom: 0; transform: translateX(-50%);
   background: var(--ink); color: var(--washi); font-size: 13px; font-weight: 700;
   padding: 5px 12px; border-radius: 14px; white-space: nowrap; z-index: 5;
   box-shadow: 0 4px 12px rgba(0,0,0,.4);
@@ -371,4 +373,48 @@ input[type=range] { width: 120px; accent-color: var(--felt); }
 }
 @media (max-height: 640px) {
   :root { --cw: min(11vw, 50px); --hw: min(15vw, 70px); --sw: min(6.4vw, 28px); }
+}
+
+/* ---------- フィードバック対応 ---------- */
+/* 出した札と取る札をいったん止めて見せる */
+.card.flash { box-shadow: 0 0 0 3px #fff, 0 0 18px 6px rgba(255,226,122,.9); z-index: 3; }
+
+/* ガイド: あと1枚でできる役(自分の取り札の上に出す。多いときは折り返す) */
+.guide-row {
+  display: flex; flex-wrap: wrap; gap: 4px 5px; padding: 2px 10px 6px;
+  min-width: 0;
+}
+.guide-row:empty { display: none; }
+.guide-row .chip, .guide-chips .chip {
+  flex: none;
+  font-size: 11px; font-weight: 700; line-height: 1.3;
+  padding: 2px 7px; border-radius: 10px;
+  background: var(--glow); color: var(--ink);
+  box-shadow: 0 1px 3px rgba(0,0,0,.35);
+  white-space: nowrap;
+}
+.guide-chips.inline { display: flex; gap: 5px; flex-direction: row; flex-wrap: wrap; justify-content: center; margin: 4px 0 2px; }
+.guide-chips.inline .chip { font-size: 13px; padding: 3px 10px; }
+
+/* 中断ボタン(右上) */
+.quit {
+  margin-left: 8px; flex: none;
+  padding: 5px 10px; border-radius: 14px;
+  font-size: 12px; font-weight: 700;
+  color: var(--washi); background: rgba(0,0,0,.25);
+  border: 1px solid rgba(244,236,216,.5);
+}
+.quit:active { background: rgba(0,0,0,.45); }
+.text-btn {
+  display: block; margin: 12px auto 0; padding: 4px 8px;
+  background: none; border: 0; color: var(--ink-soft);
+  font-size: 13px; text-decoration: underline;
+}
+
+/* こいこい画面から取り札を見る */
+.look-row { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 10px; }
+.look-row button {
+  padding: 9px 4px; border-radius: 6px;
+  border: 1.5px solid #cdbf9f; background: #fffaf0; color: var(--ink);
+  font-weight: 700; font-size: 14px;
 }

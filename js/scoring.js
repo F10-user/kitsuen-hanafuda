@@ -4,6 +4,7 @@ import { CARD, hasTag } from './cards.js';
 export const DEFAULT_SETTINGS = {
   months: 12, // 1 / 3 / 6 / 12
   sakeRule: true, // 小野木戸口ルール(月見花見)
+  guide: true, // ガイド: あと1枚でできる役を表示
 };
 
 function counts(captured) {
@@ -117,3 +118,43 @@ export const RULE_NOTES = [
   '場に同じ月の札が4枚出たら配り直し。雨流れはなし。',
   '引き分けは点数なしで親が続ける。上がった人が次の親。',
 ];
+
+// ガイド: あと1枚でできる役。dead は相手の取り札(もう取れない札)。
+// 例: [{ name: '赤短', text: '赤短まであと1枚' }]
+export function nearYaku(captured, dead = []) {
+  const mine = new Set(captured);
+  const gone = new Set(dead);
+  const ids = Object.keys(CARD);
+  const has = (pred) => ids.filter((id) => mine.has(id) && pred(CARD[id])).length;
+  const open = (pred) => ids.some((id) => !mine.has(id) && !gone.has(id) && pred(CARD[id]));
+  const tag = (t) => (c) => c.tags.includes(t);
+  const hikari = (c) => c.type === 'hikari';
+  const dryHikari = (c) => c.type === 'hikari' && !c.tags.includes('rain');
+  const rain = has(tag('rain')) > 0;
+  const out = [];
+  const add = (name, ok, pred) => { if (ok && open(pred)) out.push({ name, text: `${name}まであと1枚` }); };
+
+  const h = has(hikari);
+  add('五光', h === 4, hikari);
+  add('四光', !rain && h === 3, dryHikari);
+  add('雨四光', rain && h === 3, dryHikari);
+  add('三光', !rain && h === 2, dryHikari);
+
+  const isc = (c) => c.tags.some((t) => t === 'ino' || t === 'shika' || t === 'cho');
+  add('猪鹿蝶', has(isc) === 2, isc);
+  add('赤短', has(tag('akatan')) === 2, tag('akatan'));
+  add('青短', has(tag('aotan')) === 2, tag('aotan'));
+
+  const sake = has(tag('sake')) > 0;
+  const tsuki = has(tag('tsuki')) > 0;
+  const maku = has(tag('maku')) > 0;
+  add('月見酒', sake !== tsuki, sake ? tag('tsuki') : tag('sake'));
+  add('花見酒', sake !== maku, sake ? tag('maku') : tag('sake'));
+
+  const ino = has(isc) === 3;
+  const tan = has(tag('akatan')) === 3 || has(tag('aotan')) === 3;
+  add('タネ', !ino && has((c) => c.type === 'tane') === 4, (c) => c.type === 'tane');
+  add('タン', !tan && has((c) => c.type === 'tanzaku') === 4, (c) => c.type === 'tanzaku');
+  add('カス', has((c) => c.type === 'kasu') === 9, (c) => c.type === 'kasu');
+  return out;
+}

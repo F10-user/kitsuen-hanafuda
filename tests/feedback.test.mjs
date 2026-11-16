@@ -51,3 +51,23 @@ console.log('quit ok');
   assert.throws(() => E.requestRematch(left, 0), /メニューに戻りました/);
   console.log('rematch ok');
 }
+
+// 年をまたいだ親の引き継ぎ
+{
+  let g = E.newGame({ months: 1 }, 2, ['A', 'B']); // 偶数 → A(0)が親
+  assert.equal(g.oya, 0);
+  g.phase = 'gameEnd';
+  g.result = { nextOya: 0 }; // 最後の月も親が上がった
+  let n = E.rematchGame(g, 3); // サイコロは奇数でも無視
+  assert.equal(n.oya, 0); assert.equal(n.turn, 0);
+  assert.equal(n.oyaStreak, 2); assert.equal(n.year, 2); assert.ok(n.carried);
+  n.phase = 'gameEnd'; n.result = { nextOya: 1 }; // 子が上がった
+  const n2 = E.rematchGame(n, 2);
+  assert.equal(n2.oya, 1); assert.equal(n2.oyaStreak, 1); assert.equal(n2.year, 3);
+  // 月をまたぐ連チャン
+  let s = E.startRound(E.newGame({ months: 3 }, 2));
+  s.phase = 'roundEnd'; s.result = { nextOya: s.oya };
+  const s2 = E.nextRound(s);
+  assert.equal(s2.oyaStreak, 2);
+  console.log('oya carry ok');
+}

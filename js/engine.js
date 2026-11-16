@@ -8,8 +8,8 @@
 //   'koikoi'     … 役ができたので、こいこいか上がりかを選ぶ
 //   'roundEnd'   … その月が終わった(リザルト)
 //   'gameEnd'    … 全部の月が終わった
-import { ALL_IDS, CARD } from './cards.js?v=20261117-0027';
-import { scoreCaptured, finalPoints, DEFAULT_SETTINGS } from './scoring.js?v=20261117-0027';
+import { ALL_IDS, CARD } from './cards.js?v=20261117-0730';
+import { scoreCaptured, finalPoints, DEFAULT_SETTINGS } from './scoring.js?v=20261117-0730';
 
 const clone = (o) => JSON.parse(JSON.stringify(o));
 
@@ -49,6 +49,8 @@ export function newGame(settings, dice, names = ['あなた', '相手'], icons =
     icons,
     dice,
     month: 1,
+    year: 1, // 再戦するたびに1つ増える
+    oyaStreak: 1, // いまの親が何ヶ月続けて親か(年をまたいでも数える)
     oya: oyaFromDice(dice),
     turn: oyaFromDice(dice),
     phase: 'dice',
@@ -286,7 +288,9 @@ export function nextRound(state, rand = Math.random) {
     return s;
   }
   s.month += 1;
-  s.oya = s.result ? s.result.nextOya : s.oya;
+  const nextOya = s.result ? s.result.nextOya : s.oya;
+  s.oyaStreak = nextOya === s.oya ? (s.oyaStreak || 1) + 1 : 1;
+  s.oya = nextOya;
   return startRound(s, rand);
 }
 
@@ -343,8 +347,15 @@ export function leaveGame(state, p) {
 }
 
 // 再戦の新しい対局。seq は前の対局から続ける(相手の画面が古い状態と取り違えないように)
+// 年をまたいでも親は引き継ぐ: 最後の月に上がった人(引き分けなら親のまま)が、次の年も親。
 export function rematchGame(state, dice) {
   const s = newGame(state.settings, dice, state.names, state.icons);
+  const nextOya = state.result ? state.result.nextOya : state.oya;
+  s.oya = nextOya;
+  s.turn = nextOya;
+  s.oyaStreak = nextOya === state.oya ? (state.oyaStreak || 1) + 1 : 1;
+  s.year = (state.year || 1) + 1;
+  s.carried = true; // サイコロは振らずに親を引き継いだ
   s.seq = state.seq + 1;
   s.events = [{ type: 'rematchStart' }];
   return s;

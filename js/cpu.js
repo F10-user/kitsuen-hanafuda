@@ -3,9 +3,9 @@
 //   1. 取る札の価値 = 自分の役がどれだけ近づくか + 相手の役をどれだけ邪魔できるか
 //   2. 場に置いた札を相手に取られる危険も引く
 //   3. こいこいは、相手の役の近さと自分の伸びしろを比べて決める
-import { CARD } from './cards.js?v=20261117-0027';
-import { scoreCaptured } from './scoring.js?v=20261117-0027';
-import { unseenFor, fieldOptions } from './engine.js?v=20261117-0027';
+import { CARD } from './cards.js?v=20261117-0730';
+import { scoreCaptured } from './scoring.js?v=20261117-0730';
+import { unseenFor, fieldOptions } from './engine.js?v=20261117-0730';
 
 // 狙える役ごとに、必要な札の条件と枚数
 const TARGETS = [

@@ -1,11 +1,11 @@
 // 画面と操作。タイトル → ログイン → メニュー → 対局 → リザルト。
-import { CARD, MONTH_PLANTS, TYPE_LABEL, cardImage, sortCards } from './cards.js?v=20261117-0027';
-import { YAKU_TABLE, RULE_NOTES, finalPoints, scoreCaptured, nearYaku } from './scoring.js?v=20261117-0027';
-import * as E from './engine.js?v=20261117-0027';
-import * as CPU from './cpu.js?v=20261117-0027';
-import * as S from './sound.js?v=20261117-0027';
-import * as O from './online.js?v=20261117-0027';
-import { VERSION } from './version.js?v=20261117-0027';
+import { CARD, MONTH_PLANTS, TYPE_LABEL, cardImage, sortCards } from './cards.js?v=20261117-0730';
+import { YAKU_TABLE, RULE_NOTES, finalPoints, scoreCaptured, nearYaku } from './scoring.js?v=20261117-0730';
+import * as E from './engine.js?v=20261117-0730';
+import * as CPU from './cpu.js?v=20261117-0730';
+import * as S from './sound.js?v=20261117-0730';
+import * as O from './online.js?v=20261117-0730';
+import { VERSION } from './version.js?v=20261117-0730';
 
 const $ = (sel, root = document) => root.querySelector(sel);
 const $$ = (sel, root = document) => [...root.querySelectorAll(sel)];
@@ -578,6 +578,26 @@ function dieHTML(n, rolling) {
 async function runDice(state) {
   const names = state.names;
   const icons = state.icons || ['tsuru', 'ino'];
+  if (state.carried) {
+    // 年をまたいだ再戦: サイコロは振らずに、前の年の親を引き継ぐ
+    const st = state.oyaStreak || 1;
+    show(`
+      <section class="dice-wrap">
+        <div class="versus">
+          <div class="who">${iconHTML(icons[0], 60)}<b>${esc(names[0])}</b></div>
+          <div class="vs">対</div>
+          <div class="who">${iconHTML(icons[1], 60)}<b>${esc(names[1])}</b></div>
+        </div>
+        <div class="dice-result">
+          <p class="muted">${state.year}年目 ・ 親は前の年から引き継ぎ</p>
+          <h2>${esc(names[state.oya])}さんが親です</h2>
+          ${st >= 2 ? `<p class="streak">親 ${st}連チャン</p>` : ''}
+        </div>
+      </section>`);
+    S.pachi(1.2);
+    await sleep(2400);
+    return;
+  }
   show(`
     <section class="dice-wrap">
       <div class="versus">
@@ -625,10 +645,10 @@ function pbarHTML(s, p) {
   return `<div class="pbar">
     <span class="turn-dot ${myTurn ? 'on' : ''}"></span>${iconHTML(icons[p], 34)}
     <span class="nm">${esc(s.names[p])}</span>
-    ${s.oya === p ? '<span class="badge oya">親</span>' : ''}
+    ${s.oya === p ? `<span class="badge oya">親${(s.oyaStreak || 1) >= 2 ? ` ${s.oyaStreak}連` : ''}</span>` : ''}
     ${s.koi[p] ? '<span class="badge koi">こいこい</span>' : ''}
     <div class="pts"><b>${s.scores[p]}</b><small>${sc ? `今の役 ${sc}点` : '合計'}</small></div>
-    ${p !== G.me && !['gameEnd', 'aborted', 'deal', 'dice'].includes(s.phase) ? '<button class="quit" data-quit>中断</button>' : ''}
+    ${p !== G.me && !['gameEnd', 'aborted', 'deal', 'dice'].includes(s.phase) ? '<button class="quit" data-stats>戦績</button><button class="quit" data-quit>中断</button>' : ''}
   </div>`;
 }
 
@@ -682,7 +702,7 @@ function renderGame(s) {
       <div class="opp-hand">${Array.from({ length: s.hands[op].length }, backHTML).join('')}</div>
       <div class="capt" data-capt="${op}">${capGroups(s.captured[op])}<span class="hint">拡大</span></div>
       <div class="table">
-        <div class="month-tag">${s.month}月 ${months <= 12 ? MONTH_PLANTS[s.month] : ''} ・ ${s.month}/${months}</div>
+        <div class="month-tag">${(s.year || 1) > 1 ? `${s.year}年目 ・ ` : ''}${s.month}月 ${months <= 12 ? MONTH_PLANTS[s.month] : ''} ・ ${s.month}/${months}</div>
         <div class="deck-zone">
           <div class="deck ${s.phase === 'draw' && s.turn === me && !s.quit ? 'tap' : ''}">${s.deck.length ? backHTML() + backHTML() + backHTML() : ''}</div>
           <div class="deck-count">山 ${s.deck.length}</div>
@@ -965,6 +985,7 @@ screenEl.addEventListener('click', (e) => {
   const me = G.me;
 
   if (e.target.closest('[data-quit]')) return onQuit();
+  if (e.target.closest('[data-stats]')) return showStats();
 
   const capt = e.target.closest('.capt');
   if (capt) return showCaptured(Number(capt.dataset.capt), overlayEl.classList.contains('peek') ? peekBoard : null);
@@ -1018,6 +1039,67 @@ function playFromHand(id) {
     return;
   }
   act((st) => E.playCard(st, G.me, id, null));
+}
+
+// ---------------------------------------------------------------- 対局中の戦績
+// この対局の月ごとの結果と、(友達との対戦なら)この相手との通算を見せる
+function showStats() {
+  if (!G || !G.state) return;
+  const s = G.state;
+  const me = G.me;
+  G.lock = true;
+  clearTimeout(G.cpuTimer);
+  const rows = s.history.filter((h) => !h.aborted).map((h) => {
+    const who = h.winner === null ? '引き分け' : esc(s.names[h.winner]);
+    const pts = h.winner === null ? '-' : `<span class="${h.winner === me ? 'plus' : 'minus'}">${h.winner === me ? '+' : '−'}${h.points}</span>`;
+    return `<tr><td>${h.month}月</td><td>${who}</td><td class="yk">${(h.yaku || []).join('・') || '-'}</td><td>${pts}</td></tr>`;
+  }).join('');
+  openOverlay(`<div class="modal stats">
+    <h2>戦績</h2>
+    <p class="stats-sub">${(s.year || 1) > 1 ? `${s.year}年目 ・ ` : ''}${s.settings.months}ヶ月戦の${s.month}月目</p>
+    <table class="score-table"><tr><th></th><th>${esc(s.names[me])}</th><th>${esc(s.names[1 - me])}</th></tr>
+      <tr><td>いまの合計</td><td><b style="font-size:20px">${s.scores[me]}</b></td><td><b style="font-size:20px">${s.scores[1 - me]}</b></td></tr></table>
+    ${diffText(s)}
+    ${rows ? `<table class="month-table"><tr><th>月</th><th>上がり</th><th>役</th><th>点</th></tr>${rows}</table>
+      <div class="flow">${flowHTML(s.history, me, s.names)}</div>` : '<p style="text-align:center;color:var(--ink-soft)">まだ終わった月はありません</p>'}
+    <div id="vs-record">${G.mode === 'online' ? '<p class="stats-sub">この相手との通算を読み込み中…</p>' : '<p class="stats-sub">CPU対戦は戦績に残りません</p>'}</div>
+    <button class="btn" style="margin-top:14px" id="cls">閉じる</button>
+  </div>`, { dismiss: false });
+  const g = G;
+  const close = () => {
+    if (G !== g) return;
+    G.lock = false;
+    showPhaseModal(G.state, { sound: false });
+    scheduleCpu();
+  };
+  $('#cls').onclick = close;
+  $('.ov-bg', overlayEl).onclick = close;
+  if (G.mode === 'online') loadVsRecord(g);
+}
+
+async function loadVsRecord(g) {
+  const uid = app.user.id;
+  const oid = g.me === 0 ? g.room.guest_id : g.room.host_id;
+  let w = 0; let l = 0; let d = 0; let diff = 0;
+  try {
+    const ms = await O.listMatches();
+    for (const m of ms) {
+      const me = m.player0 === uid ? 0 : 1;
+      if ((me === 0 ? m.player1 : m.player0) !== oid) continue;
+      const x = m.scores[me] - m.scores[1 - me];
+      diff += x;
+      if (x > 0) w += 1; else if (x < 0) l += 1; else d += 1;
+    }
+  } catch (e) {
+    const box = $('#vs-record');
+    if (box) box.innerHTML = '<p class="stats-sub">通算を読み込めませんでした</p>';
+    return;
+  }
+  const box = $('#vs-record');
+  if (!box || G !== g) return;
+  const n = w + l + d;
+  box.innerHTML = `<div class="vs-record"><h3>${esc(g.state.names[1 - g.me])}さんとの通算(この対局より前)</h3>
+    ${n ? `<p>${n}戦 ${w}勝 ${l}敗${d ? ` ${d}分` : ''} ・ <span class="${diff >= 0 ? 'plus' : 'minus'}">${diff > 0 ? '+' : ''}${diff}点</span></p>` : '<p>まだ終わった対局はありません</p>'}</div>`;
 }
 
 // ---------------------------------------------------------------- 中断
@@ -1261,9 +1343,10 @@ function showFinal(s) {
   if (rb) {
     rb.onclick = () => {
       if (G.mode === 'cpu') {
-        const { settings } = G.state;
+        const ns = E.rematchGame(G.state, E.rollDice());
         closeOverlay();
-        startCpuGame(settings);
+        newMatch({ mode: 'cpu', me: 0, state: ns });
+        runDice(ns).then(() => enqueue(() => applyState(E.startRound(G.state))));
         return;
       }
       act((st) => E.requestRematch(st, me), { retry: true });

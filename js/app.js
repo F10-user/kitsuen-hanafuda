@@ -1,10 +1,11 @@
 // 画面と操作。タイトル → ログイン → メニュー → 対局 → リザルト。
-import { CARD, MONTH_PLANTS, TYPE_LABEL, cardImage, sortCards } from './cards.js';
-import { YAKU_TABLE, RULE_NOTES, finalPoints, scoreCaptured, nearYaku } from './scoring.js';
-import * as E from './engine.js';
-import * as CPU from './cpu.js';
-import * as S from './sound.js';
-import * as O from './online.js';
+import { CARD, MONTH_PLANTS, TYPE_LABEL, cardImage, sortCards } from './cards.js?v=20261117-0027';
+import { YAKU_TABLE, RULE_NOTES, finalPoints, scoreCaptured, nearYaku } from './scoring.js?v=20261117-0027';
+import * as E from './engine.js?v=20261117-0027';
+import * as CPU from './cpu.js?v=20261117-0027';
+import * as S from './sound.js?v=20261117-0027';
+import * as O from './online.js?v=20261117-0027';
+import { VERSION } from './version.js?v=20261117-0027';
 
 const $ = (sel, root = document) => root.querySelector(sel);
 const $$ = (sel, root = document) => [...root.querySelectorAll(sel)];
@@ -901,7 +902,7 @@ function showPhaseModal(s, opts = {}) {
   const me = G.me;
   // 場を見ている途中なら、月の結果のあいだはそのまま見せておく
   const asked = s.quit && !s.quit.accepted && s.quit.by !== me;
-  if (overlayEl.classList.contains('peek') && s.phase === 'roundEnd' && !asked) return;
+  if (overlayEl.classList.contains('peek') && ['roundEnd', 'gameEnd', 'koikoi'].includes(s.phase) && !asked) return;
   if (s.phase === 'aborted') showAborted(s);
   else if (s.quit && !s.quit.accepted && s.quit.by !== me) showQuitAsk(s);
   else if (s.phase === 'koikoi' && s.turn === me) showKoikoiModal(s, opts);
@@ -966,7 +967,7 @@ screenEl.addEventListener('click', (e) => {
   if (e.target.closest('[data-quit]')) return onQuit();
 
   const capt = e.target.closest('.capt');
-  if (capt) return showCaptured(Number(capt.dataset.capt), s.phase === 'roundEnd' ? peekBoard : null);
+  if (capt) return showCaptured(Number(capt.dataset.capt), overlayEl.classList.contains('peek') ? peekBoard : null);
 
   if (s.phase === 'draw' && s.turn === me && e.target.closest('.deck-zone, .banner')) {
     S.pachi(0.4);
@@ -1138,18 +1139,14 @@ function showKoikoiModal(s, { sound = true } = {}) {
     <ul class="yaku-list">${yaku.map((y) => `<li>${y.name}<b>${y.points}点</b></li>`).join('')}</ul>
     <div class="total-line"><span>いま上がると${now.notes.length ? `(${now.notes.join('・')})` : ''}</span><big>${now.points}点</big></div>
     ${s.koi[1 - me] ? '<p style="margin:4px 0;font-size:13px;color:var(--shu-dark)">相手がこいこい中です。上がると倍になります。</p>' : ''}
-    <div class="look-row">
-      <button id="look-me">自分の取り札</button>
-      <button id="look-op">相手の取り札</button>
-    </div>
+    ${fieldMiniHTML(s, 'いまの場')}
+    ${lookRowHTML()}
     <div class="choose-row">
       <button class="btn ghost" style="color:var(--ink);box-shadow:inset 0 0 0 2px var(--ink)" id="koi">こいこい</button>
       <button class="btn shu" id="agari">上がり</button>
     </div>
   </div>`, { dismiss: false });
-  const back = () => showKoikoiModal(G.state, { sound: false });
-  $('#look-me').onclick = () => showCaptured(me, back);
-  $('#look-op').onclick = () => showCaptured(1 - me, back);
+  bindLookRow(() => showKoikoiModal(G.state, { sound: false }));
   $('#koi').onclick = () => { closeOverlay(); act((st) => E.decide(st, me, 'koikoi')); };
   $('#agari').onclick = () => { closeOverlay(); act((st) => E.decide(st, me, 'agari')); };
 }
@@ -1157,14 +1154,39 @@ function showKoikoiModal(s, { sound = true } = {}) {
 // リザルトを一度どけて、終わった時点の場をそのまま見せる
 function peekBoard() {
   const s = G.state;
-  if (s.phase !== 'roundEnd') return;
+  const koi = s.phase === 'koikoi' && s.turn === G.me;
+  if (!koi && !['roundEnd', 'gameEnd'].includes(s.phase)) return;
   renderGame(s);
   overlayEl.classList.add('peek');
-  overlayEl.innerHTML = `<div class="peek-bar"><span>${s.month}月の終わりの場</span><button class="btn shu small" id="peek-back">結果に戻る</button></div>`;
+  overlayEl.innerHTML = `<div class="peek-bar"><span>${koi ? 'いまの盤面' : `${s.month}月の終わりの場`}</span><button class="btn shu small" id="peek-back">${koi ? '選ぶ画面に戻る' : '結果に戻る'}</button></div>`;
   $('#peek-back').onclick = () => {
-    if (G && G.state && G.state.phase === 'roundEnd') showRoundResult(G.state);
-    else if (G && G.state) showPhaseModal(G.state);
+    if (!G || !G.state) return;
+    overlayEl.classList.remove('peek');
+    showPhaseModal(G.state, { sound: false });
   };
+}
+
+// 結果画面の中に、終わった時点の場をそのまま並べる
+function fieldMiniHTML(s, title = `${s.month}月の終わりの場`) {
+  return `<div class="field-mini">
+    <h3>${title}<span>${s.field.length}枚</span></h3>
+    <div class="cards">${s.field.length ? s.field.map((id) => cardHTML(id)).join('') : '<span class="muted" style="color:var(--ink-soft)">場に札はありません</span>'}</div>
+  </div>`;
+}
+
+function lookRowHTML() {
+  return `<div class="look-row three">
+      <button id="look-field">盤面を見る</button>
+      <button id="look-me">自分の取り札</button>
+      <button id="look-op">相手の取り札</button>
+    </div>`;
+}
+
+function bindLookRow(back) {
+  const me = G.me;
+  $('#look-field').onclick = peekBoard;
+  $('#look-me').onclick = () => showCaptured(me, back);
+  $('#look-op').onclick = () => showCaptured(1 - me, back);
 }
 
 function diffText(s) {
@@ -1191,19 +1213,14 @@ function showRoundResult(s) {
     <table class="score-table" style="margin-top:8px"><tr><th></th><th>${esc(s.names[me])}</th><th>${esc(s.names[1 - me])}</th></tr>
       <tr><td>合計</td><td><b>${s.scores[me]}</b></td><td><b>${s.scores[1 - me]}</b></td></tr></table>
     ${diffText(s)}
-    <div class="look-row three">
-      <button id="look-field">場を見る</button>
-      <button id="look-me">自分の取り札</button>
-      <button id="look-op">相手の取り札</button>
-    </div>
+    ${fieldMiniHTML(s)}
+    ${lookRowHTML()}
     <button class="btn shu" style="margin-top:14px" id="next" ${waiting ? 'disabled' : ''}>${waiting ? '相手を待っています…' : last ? '最終結果へ' : '次の月へ'}</button>
     ${last ? '' : '<button class="text-btn" id="quit2">ここで中断する</button>'}
   </div>`, { dismiss: false });
   const q2 = $('#quit2');
   if (q2) q2.onclick = onQuit;
-  $('#look-field').onclick = peekBoard;
-  $('#look-me').onclick = () => showCaptured(me, () => showRoundResult(G.state));
-  $('#look-op').onclick = () => showCaptured(1 - me, () => showRoundResult(G.state));
+  bindLookRow(() => showRoundResult(G.state));
   $('#next').onclick = () => {
     if (G.mode === 'cpu') { closeOverlay(); enqueue(() => applyState(E.nextRound(G.state))); return; }
     act((st) => E.setReady(st, me), { retry: true });
@@ -1233,10 +1250,13 @@ function showFinal(s) {
       <tr><td>最終</td><td><b style="font-size:22px">${s.scores[me]}</b></td><td><b style="font-size:22px">${s.scores[1 - me]}</b></td></tr></table>
     ${diffText(s)}
     <div class="flow">${flowHTML(s.history, me, s.names)}</div>
+    ${fieldMiniHTML(s)}
+    ${lookRowHTML()}
     ${G.mode === 'cpu' ? '<p style="font-size:12px;color:var(--ink-soft);text-align:center;margin:0">CPU対戦は戦績に残りません</p>' : ''}
     ${rematchHTML(s)}
     <button class="btn ghost" style="margin-top:10px;color:var(--ink);box-shadow:inset 0 0 0 2px var(--ink)" id="home">メニューへ</button>
   </div>`, { dismiss: false });
+  bindLookRow(() => showFinal(G.state));
   const rb = $('#rematch');
   if (rb) {
     rb.onclick = () => {
@@ -1350,6 +1370,7 @@ async function showSettings() {
       <table class="rules" style="width:100%;border-collapse:collapse">${YAKU_TABLE.map(([n, c, p]) => `<tr><td>${n}</td><td>${c}</td><td>${p}</td></tr>`).join('')}</table>
       <ul style="font-size:13px;padding-left:18px;margin:10px 0 0;line-height:1.6">${RULE_NOTES.map((r) => `<li>${r}</li>`).join('')}</ul>
     </div>
+    <p class="muted" style="text-align:center;margin:0">版 ${VERSION}</p>
     <div class="panel"><h3>札の画像について</h3><div class="credits" id="credits">札の画像は Wikimedia Commons の花札SVG(CC BY-SA 4.0)を使っています。アイコンはその札の絵を切り抜いたものです。</div></div>
     ${app.guest ? '<button class="btn ghost" id="login">ログインする</button>' : '<button class="btn ghost" id="logout">ログアウト</button>'}
   </section>`);

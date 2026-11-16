@@ -1,5 +1,5 @@
 // Supabase まわり: Googleログイン、プロフィール、部屋、リアルタイム同期、戦績。
-import { SUPABASE_URL, SUPABASE_ANON_KEY } from './config.js';
+import { SUPABASE_URL, SUPABASE_ANON_KEY } from './config.js?v=20261117-0027';
 
 let sb = null;
 

@@ -345,6 +345,9 @@ input[type=range] { width: 120px; accent-color: var(--felt); }
 .stat-grid { display: grid; grid-template-columns: repeat(3, 1fr); text-align: center; gap: 6px; }
 .stat-grid b { display: block; font-family: var(--serif); font-size: 28px; }
 .stat-grid span { font-size: 12px; color: var(--ink-soft); }
+.stat-label { font-size: 12px; color: var(--ink-soft); margin: 10px 0 4px; }
+.stat-label:first-of-type { margin-top: 0; }
+.stat-note { font-size: 12px; color: var(--ink-soft); text-align: center; margin: 6px 0 0; }
 .list { list-style: none; margin: 0; padding: 0; }
 .list li { border-bottom: 1px solid var(--washi-dim); }
 .list li:last-child { border-bottom: 0; }

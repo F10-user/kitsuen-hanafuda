@@ -1,11 +1,11 @@
 // 画面と操作。タイトル → ログイン → メニュー → 対局 → リザルト。
-import { CARD, MONTH_PLANTS, TYPE_LABEL, cardImage, sortCards } from './cards.js?v=20261117-1819';
-import { YAKU_TABLE, RULE_NOTES, finalPoints, scoreCaptured, nearYaku } from './scoring.js?v=20261117-1819';
-import * as E from './engine.js?v=20261117-1819';
-import * as CPU from './cpu.js?v=20261117-1819';
-import * as S from './sound.js?v=20261117-1819';
-import * as O from './online.js?v=20261117-1819';
-import { VERSION } from './version.js?v=20261117-1819';
+import { CARD, MONTH_PLANTS, TYPE_LABEL, cardImage, sortCards } from './cards.js?v=20261117-1910';
+import { YAKU_TABLE, RULE_NOTES, finalPoints, scoreCaptured, nearYaku } from './scoring.js?v=20261117-1910';
+import * as E from './engine.js?v=20261117-1910';
+import * as CPU from './cpu.js?v=20261117-1910';
+import * as S from './sound.js?v=20261117-1910';
+import * as O from './online.js?v=20261117-1910';
+import { VERSION } from './version.js?v=20261117-1910';
 
 const $ = (sel, root = document) => root.querySelector(sel);
 const $$ = (sel, root = document) => [...root.querySelectorAll(sel)];
@@ -217,6 +217,33 @@ function statsOf(matches) {
     if (diff > 0) w += 1; else if (diff < 0) l += 1; else d += 1;
   }
   return { n: matches.length, w, l, d };
+}
+
+// 月(1回戦)ごとの勝ち負け。中断で残らなかった月は数えない
+function monthStatsOf(matches, uid) {
+  let w = 0; let l = 0; let d = 0;
+  for (const m of matches) {
+    const me = m.player0 === uid ? 0 : 1;
+    for (const h of m.history || []) {
+      if (h.aborted) continue;
+      if (h.winner === null || h.winner === undefined) d += 1;
+      else if (h.winner === me) w += 1;
+      else l += 1;
+    }
+  }
+  return { n: w + l + d, w, l, d };
+}
+
+function wlText(st) {
+  return `${st.w}勝${st.l}敗${st.d ? st.d + '分' : ''}`;
+}
+
+// 対局の終わった日時(今年なら年は省く)
+function whenText(iso) {
+  const dt = new Date(iso);
+  const hm = `${dt.getHours()}:${String(dt.getMinutes()).padStart(2, '0')}`;
+  const md = `${dt.getMonth() + 1}/${dt.getDate()}`;
+  return dt.getFullYear() === new Date().getFullYear() ? `${md} ${hm}` : `${dt.getFullYear()}/${md} ${hm}`;
 }
 
 async function showMenu() {
@@ -1081,11 +1108,13 @@ async function loadVsRecord(g) {
   const uid = app.user.id;
   const oid = g.me === 0 ? g.room.guest_id : g.room.host_id;
   let w = 0; let l = 0; let d = 0; let diff = 0;
+  const vs = [];
   try {
     const ms = await O.listMatches();
     for (const m of ms) {
       const me = m.player0 === uid ? 0 : 1;
       if ((me === 0 ? m.player1 : m.player0) !== oid) continue;
+      vs.push(m);
       const x = m.scores[me] - m.scores[1 - me];
       diff += x;
       if (x > 0) w += 1; else if (x < 0) l += 1; else d += 1;
@@ -1099,7 +1128,8 @@ async function loadVsRecord(g) {
   if (!box || G !== g) return;
   const n = w + l + d;
   box.innerHTML = `<div class="vs-record"><h3>${esc(g.state.names[1 - g.me])}さんとの通算(この対局より前)</h3>
-    ${n ? `<p>${n}戦 ${w}勝 ${l}敗${d ? ` ${d}分` : ''} ・ <span class="${diff >= 0 ? 'plus' : 'minus'}">${diff > 0 ? '+' : ''}${diff}点</span></p>` : '<p>まだ終わった対局はありません</p>'}</div>`;
+    ${n ? `<p>${n}戦 ${w}勝 ${l}敗${d ? ` ${d}分` : ''} ・ <span class="${diff >= 0 ? 'plus' : 'minus'}">${diff > 0 ? '+' : ''}${diff}点</span></p>
+      <p>月ごと ${wlText(monthStatsOf(vs, uid))}</p>` : '<p>まだ終わった対局はありません</p>'}</div>`;
 }
 
 // ---------------------------------------------------------------- 中断
@@ -1384,12 +1414,14 @@ async function showHistory() {
   const ms = await loadMatches();
   const uid = app.user.id;
   const st = statsOf(ms);
+  const mst = monthStatsOf(ms, uid);
   const byOpp = {};
   for (const m of ms) {
     const me = m.player0 === uid ? 0 : 1;
     const oid = me === 0 ? m.player1 : m.player0;
-    const o = byOpp[oid] || (byOpp[oid] = { name: m.names[1 - me], w: 0, l: 0, d: 0, diff: 0 });
+    const o = byOpp[oid] || (byOpp[oid] = { name: m.names[1 - me], w: 0, l: 0, d: 0, diff: 0, ms: [] });
     o.name = m.names[1 - me];
+    o.ms.push(m);
     const diff = m.scores[me] - m.scores[1 - me];
     o.diff += diff;
     if (diff > 0) o.w += 1; else if (diff < 0) o.l += 1; else o.d += 1;
@@ -1397,18 +1429,23 @@ async function showHistory() {
   const sign = (n) => `<span class="${n >= 0 ? 'plus' : 'minus'}">${n > 0 ? '+' : ''}${n}点</span>`;
   show(`<section class="page">
     ${pageHead('戦績')}
-    <div class="panel"><h3>通算</h3><div class="stat-grid"><div><b>${st.n}</b><span>対戦</span></div><div><b>${st.w}</b><span>勝ち</span></div><div><b>${st.l}</b><span>負け</span></div></div></div>
+    <div class="panel"><h3>通算</h3>
+      <div class="stat-label">対局ごと</div>
+      <div class="stat-grid"><div><b>${st.n}</b><span>対戦</span></div><div><b>${st.w}</b><span>勝ち</span></div><div><b>${st.l}</b><span>負け</span></div></div>
+      <div class="stat-label">月ごと(1回戦ずつ)</div>
+      <div class="stat-grid"><div><b>${mst.n}</b><span>月</span></div><div><b>${mst.w}</b><span>勝ち</span></div><div><b>${mst.l}</b><span>負け</span></div></div>
+      ${mst.d ? `<p class="stat-note">引き分けの月 ${mst.d}</p>` : ''}
+    </div>
     <div class="panel"><h3>相手ごと</h3>
-      ${Object.keys(byOpp).length ? `<ul class="list">${Object.values(byOpp).map((o) => `<li><div class="line"><b>${esc(o.name)}</b><span>${o.w}勝${o.l}敗${o.d ? o.d + '分' : ''} ・ ${sign(o.diff)}</span></div></li>`).join('')}</ul>` : '<p style="margin:0;color:var(--ink-soft)">まだ対戦がありません</p>'}
+      ${Object.keys(byOpp).length ? `<ul class="list">${Object.values(byOpp).map((o) => `<li><div class="line"><div><b>${esc(o.name)}</b><div class="sub">月ごと ${wlText(monthStatsOf(o.ms, uid))}</div></div><span>${wlText(o)} ・ ${sign(o.diff)}</span></div></li>`).join('')}</ul>` : '<p style="margin:0;color:var(--ink-soft)">まだ対戦がありません</p>'}
     </div>
     <div class="panel"><h3>対局の記録</h3>
       ${ms.length ? `<ul class="list">${ms.map((m, i) => {
         const me = m.player0 === uid ? 0 : 1;
         const diff = m.scores[me] - m.scores[1 - me];
-        const dt = new Date(m.finished_at);
         const ab = m.history.some((h) => h.aborted);
         const played = m.history.filter((h) => !h.aborted).length;
-        return `<li><div class="line" data-i="${i}" style="cursor:pointer"><div><b>${esc(m.names[1 - me])}</b><div class="sub">${dt.getMonth() + 1}/${dt.getDate()} ・ ${m.months}ヶ月戦${ab ? `(${played}ヶ月で中断)` : ''} ・ ${m.scores[me]}対${m.scores[1 - me]}</div></div>${sign(diff)}</div><div class="flow" data-flow="${i}" hidden></div></li>`;
+        return `<li><div class="line" data-i="${i}" style="cursor:pointer"><div><b>${esc(m.names[1 - me])}</b><div class="sub">${whenText(m.finished_at)} ・ ${m.months}ヶ月戦${ab ? `(${played}ヶ月で中断)` : ''}</div><div class="sub">${m.scores[me]}対${m.scores[1 - me]} ・ 月ごと ${wlText(monthStatsOf([m], uid))}</div></div>${sign(diff)}</div><div class="flow" data-flow="${i}" hidden></div></li>`;
       }).join('')}</ul>` : '<p style="margin:0;color:var(--ink-soft)">まだ対戦がありません</p>'}
     </div>
   </section>`);

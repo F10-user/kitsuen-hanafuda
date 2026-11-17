@@ -1,5 +1,5 @@
 // 役の判定と点数計算。仕様書「花札こいこい ルール仕様」のとおり。
-import { CARD, hasTag } from './cards.js?v=20261117-0730';
+import { CARD, hasTag } from './cards.js?v=20261117-1819';
 
 export const DEFAULT_SETTINGS = {
   months: 12, // 1 / 3 / 6 / 12
@@ -73,18 +73,22 @@ export function scoreCaptured(captured, settings = DEFAULT_SETTINGS) {
 }
 
 // 上がったときの得点。
-//   selfKoi: 上がった本人がこいこいしていたか
-//   oppKoi : 相手がこいこいしていたか
-export function finalPoints(base, selfKoi, oppKoi) {
+//   selfKoi : 上がった本人がこいこいしていたか
+//   oppKoi  : 相手がこいこいしていたか
+//   selfFirst: 先にこいこいしたのが上がった本人か
+// A こいこい → B こいこい返し のあと
+//   B が上がる → 2倍(こいこい倍)
+//   A が上がり返す → 4倍
+export function finalPoints(base, selfKoi, oppKoi, selfFirst = false) {
   let mult = 1;
   const notes = [];
   if (base >= 7) {
     mult *= 2;
     notes.push('7点倍');
   }
-  if (oppKoi && selfKoi) {
+  if (oppKoi && selfKoi && selfFirst) {
     mult *= 4;
-    notes.push('こいこい返し×4');
+    notes.push('上がり返し×4');
   } else if (oppKoi) {
     mult *= 2;
     notes.push('こいこい倍');
@@ -114,7 +118,7 @@ export const YAKU_TABLE = [
 export const RULE_NOTES = [
   '月見酒と花見酒を両方そろえると、お互いが条件を満たして合わせて10点。',
   '7点以上で上がると得点が2倍(7点倍)。',
-  '相手がこいこいした後に上がると2倍。両者がこいこいした状態で上がると4倍。7点倍とは掛け算で重なる。',
+  '相手がこいこいした後に上がると2倍。こいこい返しされた後に、先にこいこいした人が上がり返すと4倍(こいこい返しした側が上がったときは2倍)。7点倍とは掛け算で重なる。',
   '場に同じ月の札が4枚出たら配り直し。雨流れはなし。',
   '引き分けは点数なしで親が続ける。上がった人が次の親。',
 ];

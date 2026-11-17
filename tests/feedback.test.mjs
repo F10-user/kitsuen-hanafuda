@@ -71,3 +71,26 @@ console.log('quit ok');
   assert.equal(s2.oyaStreak, 2);
   console.log('oya carry ok');
 }
+
+// こいこい返し: Aこいこい → Bこいこい返し → Bが上がると2倍、Aが上がり返すと4倍
+{
+  const base = E.startRound(E.newGame({ months: 1 }, 2));
+  const A = base.oya; const B = 1 - A;
+  const koiAt = (st, p, total) => ({ ...st, phase: 'koikoi', turn: p, quit: null, pending: { total, yaku: [{ name: 'テスト', points: total }] } });
+  let s = E.decide(koiAt(base, A, 3), A, 'koikoi');
+  assert.equal(s.firstKoi, A);
+  s = E.decide(koiAt(s, B, 3), B, 'koikoi');
+  assert.equal(s.firstKoi, A);
+  const bWins = E.decide(koiAt(s, B, 4), B, 'agari');
+  assert.equal(bWins.result.points, 8); assert.deepEqual(bWins.result.notes, ['こいこい倍']);
+  const aWins = E.decide(koiAt(s, A, 4), A, 'agari');
+  assert.equal(aWins.result.points, 16); assert.deepEqual(aWins.result.notes, ['上がり返し×4']);
+  const a7 = E.decide(koiAt(s, A, 7), A, 'agari');
+  assert.equal(a7.result.points, 56);
+  // こいこい返しなし(Bがそのまま上がる)は2倍
+  const s1 = E.decide(koiAt(base, A, 3), A, 'koikoi');
+  assert.equal(E.decide(koiAt(s1, B, 4), B, 'agari').result.points, 8);
+  // 次の月に持ち越さない
+  assert.equal(E.nextRound({ ...aWins, settings: { ...aWins.settings, months: 2 } }).firstKoi ?? null, null);
+  console.log('koikoi gaeshi ok');
+}

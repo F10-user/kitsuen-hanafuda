@@ -25,6 +25,8 @@ t('カス10', kasu, 1);
 t('盃はカスに数えない', [...kasu.slice(0,9),'09-tane'], 0);
 assert.deepEqual(finalPoints(7,false,false).points, 14);
 assert.deepEqual(finalPoints(5,false,true).points, 10);
-assert.deepEqual(finalPoints(5,true,true).points, 20);
-assert.deepEqual(finalPoints(8,true,true).points, 64);
+assert.deepEqual(finalPoints(5,true,true,false).points, 10); // こいこい返しした側が上がる → 2倍
+assert.deepEqual(finalPoints(5,true,true,true).points, 20);  // 先にこいこいした側が上がり返す → 4倍
+assert.deepEqual(finalPoints(8,true,true,true).points, 64);
+assert.deepEqual(finalPoints(8,true,true,false).points, 32);
 console.log('all passed');

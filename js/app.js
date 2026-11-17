@@ -1,11 +1,11 @@
 // 画面と操作。タイトル → ログイン → メニュー → 対局 → リザルト。
-import { CARD, MONTH_PLANTS, TYPE_LABEL, cardImage, sortCards } from './cards.js?v=20261117-0730';
-import { YAKU_TABLE, RULE_NOTES, finalPoints, scoreCaptured, nearYaku } from './scoring.js?v=20261117-0730';
-import * as E from './engine.js?v=20261117-0730';
-import * as CPU from './cpu.js?v=20261117-0730';
-import * as S from './sound.js?v=20261117-0730';
-import * as O from './online.js?v=20261117-0730';
-import { VERSION } from './version.js?v=20261117-0730';
+import { CARD, MONTH_PLANTS, TYPE_LABEL, cardImage, sortCards } from './cards.js?v=20261117-1819';
+import { YAKU_TABLE, RULE_NOTES, finalPoints, scoreCaptured, nearYaku } from './scoring.js?v=20261117-1819';
+import * as E from './engine.js?v=20261117-1819';
+import * as CPU from './cpu.js?v=20261117-1819';
+import * as S from './sound.js?v=20261117-1819';
+import * as O from './online.js?v=20261117-1819';
+import { VERSION } from './version.js?v=20261117-1819';
 
 const $ = (sel, root = document) => root.querySelector(sel);
 const $$ = (sel, root = document) => [...root.querySelectorAll(sel)];
@@ -1214,7 +1214,7 @@ function showCaptured(p, back = null) {
 function showKoikoiModal(s, { sound = true } = {}) {
   const me = G.me;
   const { total, yaku } = s.pending;
-  const now = finalPoints(total, s.koi[me], s.koi[1 - me]);
+  const now = finalPoints(total, s.koi[me], s.koi[1 - me], s.firstKoi === me);
   if (sound) S.fanfare();
   openOverlay(`<div class="modal">
     <h2>役ができました</h2>

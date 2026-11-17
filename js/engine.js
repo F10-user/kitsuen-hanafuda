@@ -8,8 +8,8 @@
 //   'koikoi'     … 役ができたので、こいこいか上がりかを選ぶ
 //   'roundEnd'   … その月が終わった(リザルト)
 //   'gameEnd'    … 全部の月が終わった
-import { ALL_IDS, CARD } from './cards.js?v=20261117-0730';
-import { scoreCaptured, finalPoints, DEFAULT_SETTINGS } from './scoring.js?v=20261117-0730';
+import { ALL_IDS, CARD } from './cards.js?v=20261117-1819';
+import { scoreCaptured, finalPoints, DEFAULT_SETTINGS } from './scoring.js?v=20261117-1819';
 
 const clone = (o) => JSON.parse(JSON.stringify(o));
 
@@ -116,6 +116,7 @@ export function startRound(state, rand = Math.random) {
     deck, field, hands,
     captured: [[], []],
     koi: [false, false],
+    firstKoi: null,
     lastScore: [0, 0],
     pending: null,
     result: null,
@@ -247,6 +248,7 @@ export function decide(state, p, choice) {
   s.seq += 1;
   const { total, yaku } = s.pending;
   if (choice === 'koikoi') {
+    if (!s.koi[0] && !s.koi[1]) s.firstKoi = p; // 先にこいこいした人(上がり返しの4倍に使う)
     s.koi[p] = true;
     s.lastScore[p] = total;
     s.events = [{ type: 'koikoi', p }];
@@ -257,7 +259,7 @@ export function decide(state, p, choice) {
 }
 
 function endRound(s, winner, { base, yaku, reason }) {
-  const fp = finalPoints(base, s.koi[winner], s.koi[1 - winner]);
+  const fp = finalPoints(base, s.koi[winner], s.koi[1 - winner], s.firstKoi === winner);
   s.scores[winner] += fp.points;
   s.phase = 'roundEnd';
   s.pending = null;

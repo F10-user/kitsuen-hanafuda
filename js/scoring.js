@@ -1,5 +1,5 @@
 // 役の判定と点数計算。仕様書「花札こいこい ルール仕様」のとおり。
-import { CARD, hasTag } from './cards.js?v=20261117-1910';
+import { CARD, hasTag } from './cards.js?v=20261118-1813';
 
 export const DEFAULT_SETTINGS = {
   months: 12, // 1 / 3 / 6 / 12

@@ -1,11 +1,11 @@
 // 画面と操作。タイトル → ログイン → メニュー → 対局 → リザルト。
-import { CARD, MONTH_PLANTS, TYPE_LABEL, cardImage, sortCards } from './cards.js?v=20261117-1910';
-import { YAKU_TABLE, RULE_NOTES, finalPoints, scoreCaptured, nearYaku } from './scoring.js?v=20261117-1910';
-import * as E from './engine.js?v=20261117-1910';
-import * as CPU from './cpu.js?v=20261117-1910';
-import * as S from './sound.js?v=20261117-1910';
-import * as O from './online.js?v=20261117-1910';
-import { VERSION } from './version.js?v=20261117-1910';
+import { CARD, MONTH_PLANTS, TYPE_LABEL, cardImage, sortCards } from './cards.js?v=20261118-1813';
+import { YAKU_TABLE, RULE_NOTES, finalPoints, scoreCaptured, nearYaku } from './scoring.js?v=20261118-1813';
+import * as E from './engine.js?v=20261118-1813';
+import * as CPU from './cpu.js?v=20261118-1813';
+import * as S from './sound.js?v=20261118-1813';
+import * as O from './online.js?v=20261118-1813';
+import { VERSION } from './version.js?v=20261118-1813';
 
 const $ = (sel, root = document) => root.querySelector(sel);
 const $$ = (sel, root = document) => [...root.querySelectorAll(sel)];

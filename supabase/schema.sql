@@ -31,8 +31,10 @@ create table if not exists public.rooms (
 );
 create unique index if not exists rooms_open_code on public.rooms (code) where status in ('waiting', 'playing');
 alter table public.rooms enable row level security;
+alter table public.rooms add column if not exists spectators uuid[] not null default '{}';
 drop policy if exists "rooms read" on public.rooms;
-create policy "rooms read" on public.rooms for select to authenticated using (auth.uid() in (host_id, guest_id));
+create policy "rooms read" on public.rooms for select to authenticated
+  using (auth.uid() in (host_id, guest_id) or auth.uid() = any(spectators));
 drop policy if exists "rooms create" on public.rooms;
 create policy "rooms create" on public.rooms for insert to authenticated with check (auth.uid() = host_id);
 drop policy if exists "rooms update" on public.rooms;
@@ -55,6 +57,35 @@ begin
   return next r;
 end $$;
 grant execute on function public.join_room(text) to authenticated;
+
+-- 観戦: 部屋コードで見るだけの人として入る(書き込みはできない)
+create or replace function public.watch_room(p_code text)
+returns setof public.rooms
+language plpgsql security definer set search_path = public as $$
+declare r public.rooms;
+begin
+  select * into r from public.rooms where code = p_code and status in ('waiting', 'playing') limit 1;
+  if not found then raise exception 'room not found'; end if;
+  if r.host_id = auth.uid() or r.guest_id = auth.uid() then
+    raise exception '自分の部屋は観戦できません';
+  end if;
+  if not (auth.uid() = any(r.spectators)) then
+    if cardinality(r.spectators) >= 20 then raise exception '観戦の人数がいっぱいです'; end if;
+    -- version は上げない(対局中の書き込みとぶつからないように)
+    update public.rooms set spectators = array_append(spectators, auth.uid())
+      where id = r.id returning * into r;
+  end if;
+  return next r;
+end $$;
+grant execute on function public.watch_room(text) to authenticated;
+
+-- 観戦をやめる
+create or replace function public.leave_watch(p_room uuid)
+returns void
+language sql security definer set search_path = public as $$
+  update public.rooms set spectators = array_remove(spectators, auth.uid()) where id = p_room;
+$$;
+grant execute on function public.leave_watch(uuid) to authenticated;
 
 -- 戦績(人との対戦だけ)
 create table if not exists public.matches (

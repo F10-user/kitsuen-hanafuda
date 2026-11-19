@@ -8,8 +8,8 @@
 //   'koikoi'     … 役ができたので、こいこいか上がりかを選ぶ
 //   'roundEnd'   … その月が終わった(リザルト)
 //   'gameEnd'    … 全部の月が終わった
-import { ALL_IDS, CARD } from './cards.js?v=20261118-1813';
-import { scoreCaptured, finalPoints, DEFAULT_SETTINGS } from './scoring.js?v=20261118-1813';
+import { ALL_IDS, CARD } from './cards.js?v=20261120-0420';
+import { scoreCaptured, finalPoints, DEFAULT_SETTINGS } from './scoring.js?v=20261120-0420';
 
 const clone = (o) => JSON.parse(JSON.stringify(o));
 

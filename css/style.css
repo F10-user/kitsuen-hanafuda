@@ -468,3 +468,6 @@ input[type=range] { width: 120px; accent-color: var(--felt); }
 .vs-record h3 { font-size: 13px; margin: 0 0 4px; }
 .vs-record p { margin: 0; font-weight: 700; }
 .pbar .quit + .quit { margin-left: 6px; }
+
+/* 観戦: 下の手札も伏せて見せる。触れない */
+.hand.watch .slot .card { filter: none; cursor: default; }

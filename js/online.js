@@ -1,5 +1,5 @@
 // Supabase まわり: Googleログイン、プロフィール、部屋、リアルタイム同期、戦績。
-import { SUPABASE_URL, SUPABASE_ANON_KEY } from './config.js?v=20261118-1813';
+import { SUPABASE_URL, SUPABASE_ANON_KEY } from './config.js?v=20261120-0420';
 
 let sb = null;
 
@@ -74,6 +74,21 @@ export async function joinRoom(code) {
   const { data, error } = await sb.rpc('join_room', { p_code: code });
   if (error) throw new Error(error.message.includes('not found') ? 'その部屋は見つかりません' : error.message);
   return Array.isArray(data) ? data[0] : data;
+}
+
+// 観戦として入る(見るだけ)
+export async function watchRoom(code) {
+  const { data, error } = await sb.rpc('watch_room', { p_code: code });
+  if (error) {
+    if (error.message.includes('not found')) throw new Error('その部屋は見つかりません');
+    if (error.message.includes('watch_room')) throw new Error('観戦の準備がまだです(Supabaseで schema.sql をもう一度実行してください)');
+    throw new Error(error.message);
+  }
+  return Array.isArray(data) ? data[0] : data;
+}
+
+export async function leaveWatch(roomId) {
+  await sb.rpc('leave_watch', { p_room: roomId });
 }
 
 export async function getRoom(id) {

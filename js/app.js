@@ -1,11 +1,11 @@
 // 画面と操作。タイトル → ログイン → メニュー → 対局 → リザルト。
-import { CARD, MONTH_PLANTS, TYPE_LABEL, cardImage, sortCards } from './cards.js?v=20261118-1813';
-import { YAKU_TABLE, RULE_NOTES, finalPoints, scoreCaptured, nearYaku } from './scoring.js?v=20261118-1813';
-import * as E from './engine.js?v=20261118-1813';
-import * as CPU from './cpu.js?v=20261118-1813';
-import * as S from './sound.js?v=20261118-1813';
-import * as O from './online.js?v=20261118-1813';
-import { VERSION } from './version.js?v=20261118-1813';
+import { CARD, MONTH_PLANTS, TYPE_LABEL, cardImage, sortCards } from './cards.js?v=20261120-0420';
+import { YAKU_TABLE, RULE_NOTES, finalPoints, scoreCaptured, nearYaku } from './scoring.js?v=20261120-0420';
+import * as E from './engine.js?v=20261120-0420';
+import * as CPU from './cpu.js?v=20261120-0420';
+import * as S from './sound.js?v=20261120-0420';
+import * as O from './online.js?v=20261120-0420';
+import { VERSION } from './version.js?v=20261120-0420';
 
 const $ = (sel, root = document) => root.querySelector(sel);
 const $$ = (sel, root = document) => [...root.querySelectorAll(sel)];
@@ -284,6 +284,7 @@ function showStartMenu() {
       <div class="stack">
         <button class="btn shu" id="create" ${offline ? 'disabled' : ''}>部屋を作る</button>
         <button class="btn" id="join" ${offline ? 'disabled' : ''}>部屋コードで入る</button>
+        <button class="btn" id="watch" ${offline ? 'disabled' : ''}>観戦する</button>
         <button class="btn ghost" id="cpu">CPUと対戦</button>
         ${offline ? '<p class="muted">ログインすると友達と対戦できます。</p>' : ''}
       </div>
@@ -291,6 +292,7 @@ function showStartMenu() {
   bindBack(showMenu);
   $('#create').onclick = () => showRoomSettings('online');
   $('#join').onclick = showJoin;
+  $('#watch').onclick = showWatch;
   $('#cpu').onclick = () => showRoomSettings('cpu');
 }
 
@@ -352,6 +354,31 @@ function showJoin() {
   };
 }
 
+function showWatch() {
+  show(`
+    <section class="page">
+      ${pageHead('観戦する')}
+      <div class="panel stack">
+        <h3>見たい部屋の6桁コード</h3>
+        <input inputmode="numeric" class="code-input" id="code" maxlength="6" placeholder="000000" autocomplete="off">
+        <p class="muted" style="margin:0;color:var(--ink-soft)">対局している人の部屋コードと同じ番号です。手札は伏せたままで、場と取り札だけ見られます。</p>
+      </div>
+      <button class="btn shu" id="go">観戦する</button>
+    </section>`);
+  bindBack(showStartMenu);
+  const inp = $('#code');
+  inp.oninput = () => { inp.value = inp.value.replace(/\D/g, '').slice(0, 6); };
+  $('#go').onclick = async () => {
+    if (!/^\d{6}$/.test(inp.value)) return toast('6桁の数字を入れてください');
+    try {
+      const room = await O.watchRoom(inp.value);
+      enterWatch(room);
+    } catch (e) {
+      toast(e.message);
+    }
+  };
+}
+
 async function doJoin(code) {
   try {
     const room = await O.joinRoom(code);
@@ -365,6 +392,9 @@ async function doJoin(code) {
 // ---------------------------------------------------------------- 対局の管理
 // G に今の対局をまとめて持つ
 let G = null;
+
+// 部屋を作った人(配る・次の月へ進める役)。観戦者は何もしない。
+const isHost = () => !!G && G.mode === 'online' && !G.spectator && G.me === 0;
 
 function newMatch(opts) {
   if (G && G.unsub) G.unsub();
@@ -386,7 +416,7 @@ function enqueue(fn) {
 
 // 自分の操作。CPU対戦はその場で、オンラインは書き込んでから反映。
 async function act(fn, { retry = false } = {}) {
-  if (!G || G.busy) return;
+  if (!G || G.busy || G.spectator) return;
   let next;
   if (G.mode === 'online') {
     // 相手の動きを画面に反映し終えてから、最新の状態をもとに書き込む
@@ -500,10 +530,11 @@ async function enterRoom(room) {
 
 function onRoomRow(row) {
   if (!G || G.mode !== 'online' || row.id !== G.room.id) return;
+  if (row.version < G.room.version) return; // 遅れて届いた古い知らせ
   G.room = row;
   if (!row.state) {
     // ゲストが入ってきた
-    if (G.me === 0 && row.guest_id) hostStart(row);
+    if (isHost() && row.guest_id) hostStart(row);
     return;
   }
   enqueue(async () => {
@@ -517,12 +548,55 @@ function onRoomRow(row) {
       if (row.state.phase === 'dice' && (!G.state || G.state.phase === 'dice')) {
         G.state = row.state;
         await runDice(row.state);
-        if (G.me === 0) hostDeal();
+        if (isHost()) hostDeal();
         return;
       }
       await applyState(row.state);
     }
   });
+}
+
+// 観戦: 部屋を作った人の側から見る。書き込みはしない。
+async function enterWatch(room) {
+  newMatch({ mode: 'online', spectator: true, me: 0, room, state: null });
+  G.unsub = O.subscribeRoom(room.id, (row) => onRoomRow(row));
+  if (!room.state) {
+    show(`
+      <section class="page">
+        ${pageHead('観戦')}
+        <div class="panel" style="text-align:center"><h3>部屋コード</h3><div class="big-code">${room.code}</div></div>
+        <p style="text-align:center" class="waiting-dots">対局が始まるのを待っています</p>
+      </section>`);
+    bindBack(leaveWatch);
+    return;
+  }
+  G.state = room.state;
+  if (room.state.phase === 'dice') {
+    // サイコロを見せ終わるまで、届いた配りは順番待ちにする
+    enqueue(() => runDice(room.state));
+    return;
+  }
+  renderGame(G.state);
+  afterState(G.state, true);
+}
+
+async function leaveWatch() {
+  const g = G;
+  if (!g || !g.spectator) return;
+  if (g.unsub) g.unsub();
+  O.leaveWatch(g.room.id).catch(() => {});
+  if (G === g) G = null;
+  closeOverlay();
+  showMenu();
+}
+
+// 観戦中に上下を入れ替える
+function swapView() {
+  if (!G || !G.spectator || !G.state) return;
+  G.me = 1 - G.me;
+  closeOverlay();
+  renderGame(G.state);
+  showPhaseModal(G.state, { sound: false });
 }
 
 async function hostStart(room) {
@@ -545,7 +619,7 @@ async function hostStart(room) {
 }
 
 async function hostDeal() {
-  if (!G || G.me !== 0) return;
+  if (!isHost()) return;
   const st = G.state;
   if (st.phase !== 'dice') return;
   await act((s) => E.startRound(s));
@@ -675,12 +749,22 @@ function pbarHTML(s, p) {
     ${s.oya === p ? `<span class="badge oya">親${(s.oyaStreak || 1) >= 2 ? ` ${s.oyaStreak}連` : ''}</span>` : ''}
     ${s.koi[p] ? '<span class="badge koi">こいこい</span>' : ''}
     <div class="pts"><b>${s.scores[p]}</b><small>${sc ? `今の役 ${sc}点` : '合計'}</small></div>
-    ${p !== G.me && !['gameEnd', 'aborted', 'deal', 'dice'].includes(s.phase) ? '<button class="quit" data-stats>戦績</button><button class="quit" data-quit>中断</button>' : ''}
+    ${p !== G.me && G.spectator ? '<button class="quit" data-stats>戦績</button><button class="quit" data-swap>入替</button><button class="quit" data-leave>退出</button>' : ''}
+    ${p !== G.me && !G.spectator && !['gameEnd', 'aborted', 'deal', 'dice'].includes(s.phase) ? '<button class="quit" data-stats>戦績</button><button class="quit" data-quit>中断</button>' : ''}
   </div>`;
 }
 
 function bannerText(s) {
   const me = G.me;
+  if (G.spectator) {
+    const who = esc(s.names[s.turn]);
+    if (s.quit && !s.quit.accepted) return '中断が申請されています';
+    if (s.phase === 'play') return `${who}さんの番`;
+    if (s.phase === 'draw') return `${who}さんが山札を引きます…`;
+    if (s.phase === 'chooseDraw') return `${who}さんが取る札を選んでいます…`;
+    if (s.phase === 'koikoi') return `${who}さんがこいこいか上がりか考えています…`;
+    return '';
+  }
   if (s.quit && !s.quit.accepted) return s.quit.by === me ? '中断の返事を待っています…' : '中断が申請されています';
   if (G.choose) return '取る札を選んでください';
   if (s.phase === 'draw') return s.turn === me ? '山札をタップして引く' : '相手が山札を引きます…';
@@ -697,6 +781,7 @@ function renderGame(s) {
   const me = G.me;
   const op = 1 - me;
   const myTurnPlay = s.turn === me && s.phase === 'play';
+  const watchers = G.mode === 'online' && G.room && G.room.spectators ? G.room.spectators.length : 0;
   const selMonth = G.sel ? CARD[G.sel].month : null;
   const pickIds = G.choose ? G.choose.options
     : s.phase === 'chooseDraw' && s.turn === me && s.pending ? s.pending.options : [];
@@ -709,7 +794,7 @@ function renderGame(s) {
     return cardHTML(id, cls);
   }).join('');
 
-  const hand = sortCards(s.hands[me]);
+  const hand = G.spectator ? s.hands[me].map((_, i) => `back-${i}`) : sortCards(s.hands[me]);
   const n = hand.length;
   const spread = Math.min(22, n * 3);
   const handHTML = hand.map((id, i) => {
@@ -717,8 +802,9 @@ function renderGame(s) {
     const k = (i - (n - 1) / 2) * (n > 6 ? 0.4 : 0.56);
     const sel = G.sel === id || (G.choose && G.choose.card === id);
     const lift = sel ? ' translateY(-22px) scale(1.14)' : '';
-    const glow = prefs.highlight && myTurnPlay && s.field.some((f) => CARD[f].month === CARD[id].month) ? 'glow' : '';
-    return `<div class="slot ${sel ? 'sel' : ''}" data-rot="${sel ? 0 : a}" style="z-index:${i + 1};transform:translateX(calc(-50% + ${k} * var(--hw))) rotate(${sel ? 0 : a}deg)${lift}">${cardHTML(id, glow)}</div>`;
+    const glow = !G.spectator && prefs.highlight && myTurnPlay && s.field.some((f) => CARD[f].month === CARD[id].month) ? 'glow' : '';
+    const face = G.spectator ? backHTML() : cardHTML(id, glow);
+    return `<div class="slot ${sel ? 'sel' : ''}" data-rot="${sel ? 0 : a}" style="z-index:${i + 1};transform:translateX(calc(-50% + ${k} * var(--hw))) rotate(${sel ? 0 : a}deg)${lift}">${face}</div>`;
   }).join('');
 
   const banner = bannerText(s);
@@ -729,7 +815,7 @@ function renderGame(s) {
       <div class="opp-hand">${Array.from({ length: s.hands[op].length }, backHTML).join('')}</div>
       <div class="capt" data-capt="${op}">${capGroups(s.captured[op])}<span class="hint">拡大</span></div>
       <div class="table">
-        <div class="month-tag">${(s.year || 1) > 1 ? `${s.year}年目 ・ ` : ''}${s.month}月 ${months <= 12 ? MONTH_PLANTS[s.month] : ''} ・ ${s.month}/${months}</div>
+        <div class="month-tag">${(s.year || 1) > 1 ? `${s.year}年目 ・ ` : ''}${s.month}月 ${months <= 12 ? MONTH_PLANTS[s.month] : ''} ・ ${s.month}/${months}${watchers ? ` ・ 観戦${watchers}人` : ''}</div>
         <div class="deck-zone">
           <div class="deck ${s.phase === 'draw' && s.turn === me && !s.quit ? 'tap' : ''}">${s.deck.length ? backHTML() + backHTML() + backHTML() : ''}</div>
           <div class="deck-count">山 ${s.deck.length}</div>
@@ -741,18 +827,20 @@ function renderGame(s) {
       <div class="guide-row">${guideHTML(s, me)}</div>
       <div class="capt" data-capt="${me}">${capGroups(s.captured[me])}<span class="hint">拡大</span></div>
       ${pbarHTML(s, me)}
-      <div class="hand ${myTurnPlay ? '' : 'wait'}">${handHTML}</div>
+      <div class="hand ${myTurnPlay && !G.spectator ? '' : 'wait'} ${G.spectator ? 'watch' : ''}">${handHTML}</div>
     </div>`;
 }
 
 // 札の位置の変化をなめらかに見せる(FLIP)
-function flipRender(s, { fromOpp = [], turnOver = [] } = {}) {
+function flipRender(s, { fromOpp = [], fromMine = [], turnOver = [] } = {}) {
   const before = new Map();
   $$('.card[data-id]', screenEl).forEach((el) => before.set(el.dataset.id, el.getBoundingClientRect()));
   const deckEl = $('.deck', screenEl);
   const deckRect = deckEl ? deckEl.getBoundingClientRect() : null;
   const oppEl = $('.opp-hand', screenEl);
   const oppRect = oppEl ? oppEl.getBoundingClientRect() : null;
+  const handEl = $('.hand', screenEl);
+  const handRect = handEl ? handEl.getBoundingClientRect() : null;
   renderGame(s);
   let moved = 0;
   $$('.card[data-id]', screenEl).forEach((el) => {
@@ -769,7 +857,7 @@ function flipRender(s, { fromOpp = [], turnOver = [] } = {}) {
       sc = old.width / r.width;
     } else {
       // 新しく見えた札: 山札(相手が出した札は相手の手元)から飛んでくる
-      const o = fromOpp.includes(id) ? oppRect : deckRect;
+      const o = fromOpp.includes(id) ? oppRect : fromMine.includes(id) ? handRect : deckRect;
       if (!o) return;
       sc = Math.min(1, Math.max(0.3, o.width / r.width));
       dx = o.left + o.width / 2 - r.left - (r.width * sc) / 2;
@@ -816,14 +904,14 @@ function stageView(base, after, p, card, took) {
 }
 
 // 相手の札は1秒止める。自分の札は軽く見せるだけ。
-async function showTake(base, after, ev, fromOpp, turnOver = []) {
+async function showTake(base, after, ev, fromOpp, turnOver = [], fromMine = []) {
   const st = stageView(base, after, ev.p, ev.card, ev.took);
   if (!st) return false;
   G.flash = [ev.card, ...ev.took];
-  flipRender(st, { fromOpp, turnOver });
+  flipRender(st, { fromOpp, fromMine, turnOver });
   if (turnOver.length) await sleep(380);
   S.pachi(0.9);
-  await sleep(ev.p !== G.me ? 1000 : 400);
+  await sleep(ev.p !== G.me || G.spectator ? 1000 : 400);
   G.flash = null;
   return true;
 }
@@ -898,10 +986,11 @@ async function applyState(next) {
     if (draw) mid = undoDraw(next, draw);
     else if (reveal) mid = { ...next, phase: 'play', pending: null, deck: [reveal.card, ...next.deck] };
     const fromOpp = play.p !== me ? [play.card] : [];
-    const staged = await showTake(prev, mid, play, fromOpp);
-    flipRender(mid, { fromOpp: staged ? [] : fromOpp });
+    const fromMine = G.spectator && play.p === me ? [play.card] : [];
+    const staged = await showTake(prev, mid, play, fromOpp, [], fromMine);
+    flipRender(mid, staged ? {} : { fromOpp, fromMine });
     S.pachi(play.took.length ? 1.1 : 0.8);
-    await sleep(draw || reveal ? (play.p !== me ? 700 : 520) : 360);
+    await sleep(draw || reveal ? (play.p !== me || G.spectator ? 700 : 520) : 360);
   }
   // 山札からめくった札
   const drawn = draw ? [draw.card] : reveal ? [reveal.card] : [];
@@ -913,7 +1002,7 @@ async function applyState(next) {
   flipRender(next, { turnOver: shown ? [] : drawn });
   if (draw || reveal) {
     S.pachi(draw && draw.took.length ? 1.1 : 0.7);
-    await sleep(draw && draw.p !== me ? 600 : 420);
+    await sleep(draw && (draw.p !== me || G.spectator) ? 600 : 420);
   }
   const qe = evs.find((e) => e.type === 'quitDeclined');
   if (qe && qe.p !== me) toast('中断は断られました。続けます');
@@ -926,7 +1015,7 @@ async function applyState(next) {
     await sleep(1500);
   }
   const yk = evs.find((e) => e.type === 'yaku');
-  if (yk && yk.p !== me) {
+  if (yk && (yk.p !== me || G.spectator)) {
     S.fanfare();
     shout(yk.yaku.map((y) => y.name).join('・'), `${esc(next.names[yk.p])} ${yk.total}点`);
     await sleep(1400);
@@ -948,10 +1037,11 @@ async function applyState(next) {
 function showPhaseModal(s, opts = {}) {
   const me = G.me;
   // 場を見ている途中なら、月の結果のあいだはそのまま見せておく
-  const asked = s.quit && !s.quit.accepted && s.quit.by !== me;
+  const asked = s.quit && !s.quit.accepted && s.quit.by !== me && !G.spectator;
   if (overlayEl.classList.contains('peek') && ['roundEnd', 'gameEnd', 'koikoi'].includes(s.phase) && !asked) return;
   if (s.phase === 'aborted') showAborted(s);
-  else if (s.quit && !s.quit.accepted && s.quit.by !== me) showQuitAsk(s);
+  else if (G.spectator && ['play', 'draw', 'chooseDraw', 'koikoi'].includes(s.phase)) closeOverlay();
+  else if (asked) showQuitAsk(s);
   else if (s.phase === 'koikoi' && s.turn === me) showKoikoiModal(s, opts);
   else if (s.phase === 'roundEnd') showRoundResult(s);
   else if (s.phase === 'gameEnd') showFinal(s);
@@ -961,13 +1051,14 @@ function showPhaseModal(s, opts = {}) {
 function afterState(s) {
   if (!G.lock) showPhaseModal(s);
   if (G.mode === 'cpu') scheduleCpu();
+  if (G.spectator) return;
   if (G.mode === 'online' && s.phase === 'aborted' && !G.saved) {
     G.saved = true;
     saveAborted(s);
     return;
   }
   // オンライン: 二人とも「次へ」を押したら親(ホスト)が次の月を配る
-  if (G.mode === 'online' && G.me === 0 && s.phase === 'roundEnd' && s.ready[0] && s.ready[1]) {
+  if (isHost() && s.phase === 'roundEnd' && s.ready[0] && s.ready[1]) {
     setTimeout(() => act((st) => E.nextRound(st)), 300);
   }
   if (G.mode === 'online' && s.phase === 'gameEnd' && !G.saved) {
@@ -1002,7 +1093,7 @@ async function startRematch(ns) {
   G.choose = null;
   closeOverlay();
   await runDice(ns);
-  if (G.me === 0) hostDeal();
+  if (isHost()) hostDeal();
 }
 
 // ---------------------------------------------------------------- 対局中のタップ
@@ -1013,9 +1104,12 @@ screenEl.addEventListener('click', (e) => {
 
   if (e.target.closest('[data-quit]')) return onQuit();
   if (e.target.closest('[data-stats]')) return showStats();
+  if (e.target.closest('[data-swap]')) return swapView();
+  if (e.target.closest('[data-leave]')) return leaveWatch();
 
   const capt = e.target.closest('.capt');
   if (capt) return showCaptured(Number(capt.dataset.capt), overlayEl.classList.contains('peek') ? peekBoard : null);
+  if (G.spectator) return;
 
   if (s.phase === 'draw' && s.turn === me && e.target.closest('.deck-zone, .banner')) {
     S.pachi(0.4);
@@ -1089,7 +1183,7 @@ function showStats() {
     ${diffText(s)}
     ${rows ? `<table class="month-table"><tr><th>月</th><th>上がり</th><th>役</th><th>点</th></tr>${rows}</table>
       <div class="flow">${flowHTML(s.history, me, s.names)}</div>` : '<p style="text-align:center;color:var(--ink-soft)">まだ終わった月はありません</p>'}
-    <div id="vs-record">${G.mode === 'online' ? '<p class="stats-sub">この相手との通算を読み込み中…</p>' : '<p class="stats-sub">CPU対戦は戦績に残りません</p>'}</div>
+    <div id="vs-record">${G.spectator ? '' : G.mode === 'online' ? '<p class="stats-sub">この相手との通算を読み込み中…</p>' : '<p class="stats-sub">CPU対戦は戦績に残りません</p>'}</div>
     <button class="btn" style="margin-top:14px" id="cls">閉じる</button>
   </div>`, { dismiss: false });
   const g = G;
@@ -1101,7 +1195,7 @@ function showStats() {
   };
   $('#cls').onclick = close;
   $('.ov-bg', overlayEl).onclick = close;
-  if (G.mode === 'online') loadVsRecord(g);
+  if (G.mode === 'online' && !G.spectator) loadVsRecord(g);
 }
 
 async function loadVsRecord(g) {
@@ -1208,7 +1302,7 @@ function showAborted(s) {
   const done = s.history.length;
   openOverlay(`<div class="modal">
     <h2>中断しました</h2>
-    <p style="text-align:center;margin:0 0 8px;color:var(--ink-soft)">${done ? `${done}ヶ月目までの結果を戦績に残しました` : '終わった月がないので、戦績には残りません'}</p>
+    <p style="text-align:center;margin:0 0 8px;color:var(--ink-soft)">${G.spectator ? `${done}ヶ月目までで終わりました` : done ? `${done}ヶ月目までの結果を戦績に残しました` : '終わった月がないので、戦績には残りません'}</p>
     <table class="score-table"><tr><th></th><th>${esc(s.names[me])}</th><th>${esc(s.names[1 - me])}</th></tr>
       <tr><td>合計</td><td><b style="font-size:22px">${s.scores[me]}</b></td><td><b style="font-size:22px">${s.scores[1 - me]}</b></td></tr></table>
     ${diffText(s)}
@@ -1216,6 +1310,7 @@ function showAborted(s) {
     <button class="btn shu" style="margin-top:14px" id="home">メニューへ</button>
   </div>`, { dismiss: false });
   $('#home').onclick = () => {
+    if (G.spectator) return leaveWatch();
     if (G.unsub) G.unsub();
     G = null;
     closeOverlay();
@@ -1287,10 +1382,13 @@ function fieldMiniHTML(s, title = `${s.month}月の終わりの場`) {
 }
 
 function lookRowHTML() {
+  const s = G.state;
+  const a = G.spectator ? `${esc(s.names[G.me])}の取り札` : '自分の取り札';
+  const b = G.spectator ? `${esc(s.names[1 - G.me])}の取り札` : '相手の取り札';
   return `<div class="look-row three">
       <button id="look-field">盤面を見る</button>
-      <button id="look-me">自分の取り札</button>
-      <button id="look-op">相手の取り札</button>
+      <button id="look-me">${a}</button>
+      <button id="look-op">${b}</button>
     </div>`;
 }
 
@@ -1305,6 +1403,7 @@ function diffText(s) {
   const me = G.me;
   const d = s.scores[me] - s.scores[1 - me];
   if (d === 0) return '<p class="diff">同点</p>';
+  if (G.spectator) return `<p class="diff">${esc(s.names[d > 0 ? me : 1 - me])}が +${Math.abs(d)}点</p>`;
   return d > 0 ? `<p class="diff plus">あなたが +${d}点</p>` : `<p class="diff minus">${esc(s.names[1 - me])}が +${-d}点</p>`;
 }
 
@@ -1316,7 +1415,7 @@ function showRoundResult(s) {
   if (r.winner === null) head = '引き分け';
   else if (r.reason === 'teshi' || r.reason === 'kuttsuki') head = `${esc(s.names[r.winner])}の${r.yaku[0].name}`;
   else head = `${esc(s.names[r.winner])}の上がり`;
-  const waiting = G.mode === 'online' && (s.ready[me] || (s.quit && s.quit.by === me));
+  const waiting = G.mode === 'online' && (G.spectator || s.ready[me] || (s.quit && s.quit.by === me));
   openOverlay(`<div class="modal">
     <p style="text-align:center;margin:0 0 4px;color:var(--ink-soft)">${s.month}月 ${s.settings.months <= 12 ? MONTH_PLANTS[s.month] : ''} の結果</p>
     <h2>${head}</h2>
@@ -1327,11 +1426,13 @@ function showRoundResult(s) {
     ${diffText(s)}
     ${fieldMiniHTML(s)}
     ${lookRowHTML()}
-    <button class="btn shu" style="margin-top:14px" id="next" ${waiting ? 'disabled' : ''}>${waiting ? '相手を待っています…' : last ? '最終結果へ' : '次の月へ'}</button>
-    ${last ? '' : '<button class="text-btn" id="quit2">ここで中断する</button>'}
+    <button class="btn shu" style="margin-top:14px" id="next" ${waiting ? 'disabled' : ''}>${G.spectator ? '二人が進めるのを待っています…' : waiting ? '相手を待っています…' : last ? '最終結果へ' : '次の月へ'}</button>
+    ${last || G.spectator ? (G.spectator ? '<button class="text-btn" id="leave2">観戦をやめる</button>' : '') : '<button class="text-btn" id="quit2">ここで中断する</button>'}
   </div>`, { dismiss: false });
   const q2 = $('#quit2');
   if (q2) q2.onclick = onQuit;
+  const l2 = $('#leave2');
+  if (l2) l2.onclick = leaveWatch;
   bindLookRow(() => showRoundResult(G.state));
   $('#next').onclick = () => {
     if (G.mode === 'cpu') { closeOverlay(); enqueue(() => applyState(E.nextRound(G.state))); return; }
@@ -1356,8 +1457,9 @@ function flowHTML(allHistory, me, names) {
 function showFinal(s) {
   const me = G.me;
   const d = s.scores[me] - s.scores[1 - me];
+  const head = G.spectator ? (d === 0 ? '引き分け' : `${esc(s.names[d > 0 ? me : 1 - me])}の勝ち`) : d > 0 ? '勝ち' : d < 0 ? '負け' : '引き分け';
   openOverlay(`<div class="modal">
-    <h2>${d > 0 ? '勝ち' : d < 0 ? '負け' : '引き分け'}</h2>
+    <h2>${head}</h2>
     <table class="score-table"><tr><th></th><th>${esc(s.names[me])}</th><th>${esc(s.names[1 - me])}</th></tr>
       <tr><td>最終</td><td><b style="font-size:22px">${s.scores[me]}</b></td><td><b style="font-size:22px">${s.scores[1 - me]}</b></td></tr></table>
     ${diffText(s)}
@@ -1384,6 +1486,7 @@ function showFinal(s) {
   }
   $('#home').onclick = async () => {
     const g = G;
+    if (g.spectator) return leaveWatch();
     if (g.mode === 'online' && !(g.state.gone && g.state.gone[me])) {
       // 相手が再戦を待ち続けないように、退出したことを伝える
       await act((st) => E.leaveGame(st, me), { retry: true });
@@ -1397,6 +1500,7 @@ function showFinal(s) {
 
 function rematchHTML(s) {
   const me = G.me;
+  if (G.spectator) return '<p class="rematch-note">再戦が始まれば、そのまま観戦を続けます</p>';
   const label = `再戦(${s.settings.months}ヶ月・同じルール)`;
   if (G.mode === 'cpu') return `<button class="btn shu" style="margin-top:14px" id="rematch">${label}</button>`;
   const gone = s.gone && s.gone[1 - me];

@@ -1,11 +1,11 @@
 // 画面と操作。タイトル → ログイン → メニュー → 対局 → リザルト。
-import { CARD, MONTH_PLANTS, TYPE_LABEL, cardImage, sortCards } from './cards.js?v=20261120-0420';
-import { YAKU_TABLE, RULE_NOTES, finalPoints, scoreCaptured, nearYaku } from './scoring.js?v=20261120-0420';
-import * as E from './engine.js?v=20261120-0420';
-import * as CPU from './cpu.js?v=20261120-0420';
-import * as S from './sound.js?v=20261120-0420';
-import * as O from './online.js?v=20261120-0420';
-import { VERSION } from './version.js?v=20261120-0420';
+import { CARD, MONTH_PLANTS, TYPE_LABEL, cardImage, sortCards } from './cards.js?v=20261122-2024';
+import { YAKU_TABLE, RULE_NOTES, finalPoints, scoreCaptured, nearYaku } from './scoring.js?v=20261122-2024';
+import * as E from './engine.js?v=20261122-2024';
+import * as CPU from './cpu.js?v=20261122-2024';
+import * as S from './sound.js?v=20261122-2024';
+import * as O from './online.js?v=20261122-2024';
+import { VERSION } from './version.js?v=20261122-2024';
 
 const $ = (sel, root = document) => root.querySelector(sel);
 const $$ = (sel, root = document) => [...root.querySelectorAll(sel)];
@@ -414,59 +414,81 @@ function enqueue(fn) {
   return g.queue;
 }
 
-// 自分の操作。CPU対戦はその場で、オンラインは書き込んでから反映。
-async function act(fn, { retry = false } = {}) {
+// 自分の操作。CPU対戦はその場で計算し、オンラインはサーバーに操作を送って判定してもらう。
+//   fn     … CPU対戦で使う(盤面 → 次の盤面)
+//   online … オンラインでサーバーに送る操作 { type, args }
+async function act(fn, online) {
   if (!G || G.busy || G.spectator) return;
-  let next;
   if (G.mode === 'online') {
-    // 相手の動きを画面に反映し終えてから、最新の状態をもとに書き込む
-    // (古い画面のまま書くと、相手の手を上書きしてしまう)
     const g = G;
     g.busy = true;
+    // 相手の動きを画面に反映し終えてから送る
     await g.queue;
     if (G !== g) return;
-    let base = g.state;
-    if (g.room.state && base && g.room.state.seq !== base.seq) {
-      if (!retry) {
-        g.busy = false;
-        toast('相手の動きがありました。もう一度どうぞ');
-        return;
-      }
-      base = g.room.state;
-    }
-    try { next = fn(base); } catch (e) { g.busy = false; toast(e.message); return; }
-  } else {
-    try { next = fn(G.state); } catch (e) { toast(e.message); return; }
-  }
-  G.sel = null;
-  G.choose = null;
-  if (G.mode === 'online') {
+    let res;
     try {
-      let row = await O.writeState(G.room, next);
-      if (!row && retry) {
-        // 「次へ」は二人が同時に押すことがあるので、最新の状態に重ねて書き直す
-        G.room = await O.getRoom(G.room.id);
-        next = fn(G.room.state);
-        row = await O.writeState(G.room, next);
-      }
-      if (!row) {
-        // 先に誰かが書いていた
-        G.room = await O.getRoom(G.room.id);
-        G.busy = false;
-        enqueue(() => applyState(G.room.state));
-        toast('もう一度どうぞ');
-        return;
-      }
-      G.room = row;
+      res = await O.gameAction(g.room.id, online.type, online.args || {});
     } catch (e) {
-      G.busy = false;
-      toast('通信できませんでした: ' + e.message);
+      g.busy = false;
+      toast(e.message);
+      if (G !== g) return;
+      // 閉じた画面(こいこいの選択など)を出し直し、サーバーの盤面も取り直す
+      if (G.state && $('.game', screenEl)) {
+        renderGame(G.state);
+        if (!G.lock) showPhaseModal(G.state, { sound: false });
+      }
+      refreshView();
       return;
     }
-    G.busy = false;
+    g.busy = false;
+    if (G !== g) return;
+    G.sel = null;
+    G.choose = null;
+    if (res.version > g.room.version) g.room = { ...g.room, version: res.version };
+    receiveView(res.view);
+    return;
   }
+  let next;
+  try { next = fn(G.state); } catch (e) { toast(e.message); return; }
+  G.sel = null;
+  G.choose = null;
   enqueue(() => applyState(next));
 }
+
+// サーバーから届いた自分の盤面を反映する(自分の操作の返事と、相手の操作の知らせの両方)
+function receiveView(st) {
+  if (!G || !st) return;
+  const g = G;
+  enqueue(async () => {
+    if (G !== g) return;
+    if (G.state && st.seq <= G.state.seq) return; // もう反映した盤面
+    if (st.phase === 'dice' && G.state && G.state.phase === 'gameEnd') {
+      await startRematch(st);
+      return;
+    }
+    if (st.phase === 'dice' && (!G.state || G.state.phase === 'dice')) {
+      G.state = st;
+      await runDice(st);
+      if (isHost()) hostDeal();
+      return;
+    }
+    await applyState(st);
+  });
+}
+
+// 通信が途切れたときなどに、サーバーの盤面を取り直す
+async function refreshView() {
+  const g = G;
+  if (!g || g.mode !== 'online' || g.spectator || !g.room) return;
+  try {
+    const st = await O.getMyView(g.room.id, app.user.id);
+    if (G === g && st) receiveView(st);
+  } catch (e) { /* 次の知らせを待つ */ }
+}
+
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'visible') refreshView();
+});
 
 // ---------------------------------------------------------------- CPU対戦
 function startCpuGame(settings) {
@@ -509,19 +531,31 @@ function scheduleCpu() {
 async function enterRoom(room) {
   const me = room.host_id === app.user.id ? 0 : 1;
   newMatch({ mode: 'online', me, room, state: null });
-  G.unsub = O.subscribeRoom(room.id, (row) => onRoomRow(row));
+  G.unsub = O.subscribeRoom(room.id, (row) => onRoomRow(row), (st) => receiveView(st));
   if (!room.state) {
+    watchStart(G);
     if (me === 0) {
       if (room.guest_id) return hostStart(room);
       return showWaiting(room);
     }
     return showGuestWaiting(room);
   }
-  // 入り直し: 今の状態をそのまま表示
-  G.state = room.state;
-  if (room.state.phase === 'dice') {
-    await runDice(room.state);
-    if (me === 0) hostDeal();
+  // 入り直し: サーバーから自分の盤面をもらって、そのまま表示
+  const g = G;
+  let st = null;
+  try { st = await O.getMyView(room.id, app.user.id); } catch (e) { /* 下で扱う */ }
+  if (G !== g) return;
+  if (!st) {
+    toast('盤面を読み込めませんでした');
+    return showMenu();
+  }
+  G.state = st;
+  if (st.phase === 'dice') {
+    // サイコロを見せ終わるまで、届いた盤面は順番待ちにする
+    enqueue(async () => {
+      await runDice(st);
+      if (isHost()) hostDeal();
+    });
     return;
   }
   renderGame(G.state);
@@ -537,23 +571,26 @@ function onRoomRow(row) {
     if (isHost() && row.guest_id) hostStart(row);
     return;
   }
-  enqueue(async () => {
-    if (!G.state || row.state.seq > G.state.seq) {
-      if (row.state.phase === 'dice' && G.state && G.state.phase === 'gameEnd') {
-        // 相手が再戦を始めた(自分が書いた再戦の知らせなら、もう始めているので何もしない)
-        if (G.rematching) return;
-        await startRematch(row.state);
-        return;
+  // 観戦者は部屋の(伏せた)盤面を見る。プレイヤーは自分の盤面が別に届く
+  if (G.spectator) receiveView(row.state);
+}
+
+// リアルタイムの知らせを取りこぼしても止まらないように、始まるまでは数秒ごとに確かめる
+async function watchStart(g) {
+  for (let i = 0; i < 200; i += 1) {
+    await sleep(3000);
+    if (G !== g || g.state) return;
+    try {
+      if (g.me === 0 && !g.room.guest_id) {
+        const row = await O.getRoom(g.room.id);
+        if (G !== g || g.state) return;
+        if (row.status === 'closed') return;
+        if (row.guest_id) { g.room = row; hostStart(row); }
+      } else {
+        await refreshView();
       }
-      if (row.state.phase === 'dice' && (!G.state || G.state.phase === 'dice')) {
-        G.state = row.state;
-        await runDice(row.state);
-        if (isHost()) hostDeal();
-        return;
-      }
-      await applyState(row.state);
-    }
-  });
+    } catch (e) { /* 次に確かめる */ }
+  }
 }
 
 // 観戦: 部屋を作った人の側から見る。書き込みはしない。
@@ -599,30 +636,32 @@ function swapView() {
   showPhaseModal(G.state, { sound: false });
 }
 
+// ゲストが入ったら、サーバーに対局を始めてもらう(名前やサイコロはサーバーが決める)
 async function hostStart(room) {
   if (G.starting) return;
   G.starting = true;
-  let names = ['ホスト', 'ゲスト'];
-  let icons = ['tsuru', 'ino'];
+  const g = G;
+  let res;
   try {
-    const ps = await O.getProfiles([room.host_id, room.guest_id]);
-    names = [ps[room.host_id]?.nickname || 'ホスト', ps[room.guest_id]?.nickname || 'ゲスト'];
-    icons = [ps[room.host_id]?.icon || 'tsuru', ps[room.guest_id]?.icon || 'ino'];
-  } catch (e) { /* 名前が取れなくても続ける */ }
-  const state = E.newGame(room.settings, E.rollDice(), names, icons);
-  const row = await O.writeState(room, state, { status: 'playing' });
-  if (!row) return;
-  G.room = row;
-  G.state = state;
-  await runDice(state);
-  hostDeal();
+    res = await O.gameAction(room.id, 'start');
+  } catch (e) {
+    if (G !== g) return;
+    G.starting = false;
+    if (!/もう始まって/.test(e.message)) toast(e.message);
+    // もう始まっていたら、その盤面を取りに行く
+    refreshView();
+    return;
+  }
+  if (G !== g) return;
+  if (res.version > g.room.version) g.room = { ...g.room, version: res.version };
+  receiveView(res.view);
 }
 
 async function hostDeal() {
   if (!isHost()) return;
   const st = G.state;
   if (st.phase !== 'dice') return;
-  await act((s) => E.startRound(s));
+  await act(null, { type: 'deal' });
 }
 
 function inviteUrl(code) {
@@ -1051,39 +1090,7 @@ function showPhaseModal(s, opts = {}) {
 function afterState(s) {
   if (!G.lock) showPhaseModal(s);
   if (G.mode === 'cpu') scheduleCpu();
-  if (G.spectator) return;
-  if (G.mode === 'online' && s.phase === 'aborted' && !G.saved) {
-    G.saved = true;
-    saveAborted(s);
-    return;
-  }
-  // オンライン: 二人とも「次へ」を押したら親(ホスト)が次の月を配る
-  if (isHost() && s.phase === 'roundEnd' && s.ready[0] && s.ready[1]) {
-    setTimeout(() => act((st) => E.nextRound(st)), 300);
-  }
-  if (G.mode === 'online' && s.phase === 'gameEnd' && !G.saved) {
-    // 二人とも保存を試みる(同じ対局は1件しか入らない)
-    G.saved = true;
-    O.saveMatch(G.room, s, [G.room.host_id, G.room.guest_id]).catch((e) => toast('戦績を保存できませんでした: ' + e.message));
-    if (G.me === 0) O.closeRoom({ id: G.room.id }).catch(() => {});
-  }
-  if (G.mode === 'online' && s.phase === 'gameEnd' && G.me === 0 && s.rematch && s.rematch[0] && s.rematch[1]) {
-    hostRematch(s);
-  }
-}
-
-// 再戦: 親(部屋を作った人)が新しい対局を書き込み、二人ともサイコロから始める
-async function hostRematch(s) {
-  if (G.rematching) return;
-  G.rematching = true;
-  const ns = E.rematchGame(s, E.rollDice());
-  let row = null;
-  try { row = await O.writeState(G.room, ns, { status: 'playing' }); } catch (e) { toast('再戦を始められませんでした: ' + e.message); }
-  if (!row) { G.rematching = false; return; }
-  G.room = row;
-  const started = startRematch(ns); // ここで G.state が新しい対局になる
-  G.rematching = false;
-  await started;
+  // オンラインでは、次の月を配る・戦績を残す・再戦を始めるのはサーバーがやる
 }
 
 async function startRematch(ns) {
@@ -1113,7 +1120,7 @@ screenEl.addEventListener('click', (e) => {
 
   if (s.phase === 'draw' && s.turn === me && e.target.closest('.deck-zone, .banner')) {
     S.pachi(0.4);
-    return act((st) => E.drawCard(st, me));
+    return act((st) => E.drawCard(st, me), { type: 'draw' });
   }
 
   const handCard = e.target.closest('.hand .card');
@@ -1137,9 +1144,9 @@ screenEl.addEventListener('click', (e) => {
     const target = fieldCard.dataset.id;
     if (G.choose && s.phase === 'play' && s.turn === me) {
       const { card } = G.choose;
-      return act((st) => E.playCard(st, me, card, target));
+      return act((st) => E.playCard(st, me, card, target), { type: 'play', args: { card, target } });
     }
-    if (s.phase === 'chooseDraw' && s.turn === me) return act((st) => E.chooseDraw(st, me, target));
+    if (s.phase === 'chooseDraw' && s.turn === me) return act((st) => E.chooseDraw(st, me, target), { type: 'choose', args: { target } });
   }
 
   // 何もないところを押したら選択を解除
@@ -1159,7 +1166,7 @@ function playFromHand(id) {
     renderGame(G.state);
     return;
   }
-  act((st) => E.playCard(st, G.me, id, null));
+  act((st) => E.playCard(st, G.me, id, null), { type: 'play', args: { card: id, target: null } });
 }
 
 // ---------------------------------------------------------------- 対局中の戦績
@@ -1269,7 +1276,7 @@ function onQuit() {
     `相手が了承すると中断します。<br>${done ? `終わった${done}ヶ月分は戦績に残り、` : ''}途中の月は残りません。`,
     '申請する', () => {
       showPhaseModal(G.state, { sound: false });
-      act((st) => E.requestQuit(st, G.me));
+      act((st) => E.requestQuit(st, G.me), { type: 'quit' });
     });
 }
 
@@ -1284,17 +1291,8 @@ function showQuitAsk(s) {
       <button class="btn shu" style="font-size:17px" id="yes">了承する</button>
     </div>
   </div>`, { dismiss: false });
-  $('#no').onclick = () => act((st) => E.answerQuit(st, me, false));
-  $('#yes').onclick = () => act((st) => E.answerQuit(st, me, true));
-}
-
-// 終わった月までを戦績に残す(途中の月は入れない)
-async function saveAborted(s) {
-  if (s.history.length) {
-    const rec = { ...s, history: [...s.history, { month: s.history.length + 1, aborted: true }] };
-    try { await O.saveMatch(G.room, rec, [G.room.host_id, G.room.guest_id]); } catch (e) { toast('戦績を保存できませんでした: ' + e.message); }
-  }
-  O.closeRoom({ id: G.room.id }).catch(() => {});
+  $('#no').onclick = () => act((st) => E.answerQuit(st, me, false), { type: 'answerQuit', args: { accept: false } });
+  $('#yes').onclick = () => act((st) => E.answerQuit(st, me, true), { type: 'answerQuit', args: { accept: true } });
 }
 
 function showAborted(s) {
@@ -1354,8 +1352,8 @@ function showKoikoiModal(s, { sound = true } = {}) {
     </div>
   </div>`, { dismiss: false });
   bindLookRow(() => showKoikoiModal(G.state, { sound: false }));
-  $('#koi').onclick = () => { closeOverlay(); act((st) => E.decide(st, me, 'koikoi')); };
-  $('#agari').onclick = () => { closeOverlay(); act((st) => E.decide(st, me, 'agari')); };
+  $('#koi').onclick = () => { closeOverlay(); act((st) => E.decide(st, me, 'koikoi'), { type: 'decide', args: { choice: 'koikoi' } }); };
+  $('#agari').onclick = () => { closeOverlay(); act((st) => E.decide(st, me, 'agari'), { type: 'decide', args: { choice: 'agari' } }); };
 }
 
 // リザルトを一度どけて、終わった時点の場をそのまま見せる
@@ -1436,7 +1434,7 @@ function showRoundResult(s) {
   bindLookRow(() => showRoundResult(G.state));
   $('#next').onclick = () => {
     if (G.mode === 'cpu') { closeOverlay(); enqueue(() => applyState(E.nextRound(G.state))); return; }
-    act((st) => E.setReady(st, me), { retry: true });
+    act((st) => E.setReady(st, me), { type: 'ready' });
   };
 }
 
@@ -1481,7 +1479,7 @@ function showFinal(s) {
         runDice(ns).then(() => enqueue(() => applyState(E.startRound(G.state))));
         return;
       }
-      act((st) => E.requestRematch(st, me), { retry: true });
+      act((st) => E.requestRematch(st, me), { type: 'rematch' });
     };
   }
   $('#home').onclick = async () => {
@@ -1489,7 +1487,7 @@ function showFinal(s) {
     if (g.spectator) return leaveWatch();
     if (g.mode === 'online' && !(g.state.gone && g.state.gone[me])) {
       // 相手が再戦を待ち続けないように、退出したことを伝える
-      await act((st) => E.leaveGame(st, me), { retry: true });
+      await act((st) => E.leaveGame(st, me), { type: 'leave' });
     }
     if (g.unsub) g.unsub();
     if (G === g) G = null;

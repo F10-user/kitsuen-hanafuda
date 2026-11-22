@@ -1,0 +1,6 @@
+# Supabase CLI の設定(Edge Function のデプロイに使う)
+project_id = "kitsuen-hanafuda"
+
+[functions.game]
+# ログインの確認は関数の中でやる(新しい API キーではこの設定が必要)
+verify_jwt = false

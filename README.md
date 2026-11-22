@@ -22,12 +22,19 @@
 
 画像が無いあいだは、月と札の名前を書いた代わりの札が表示されます。
 
-### 3. Supabase に表を作る
-1. Supabase のプロジェクトを開き、左の「SQL Editor」
-2. `supabase/schema.sql` の中身を全部貼り付けて「Run」
+### 3. Supabase に表とサーバーの処理を入れる
+対局の判定はSupabaseのサーバー(Edge Function「game」)でやります。GitHub Actions から自動で入れるので、鍵を1つ登録するだけです。
 
-### 観戦モードを使えるようにする(すでに3をやった人も)
-`supabase/schema.sql` をもう一度全部貼り付けて「Run」を押す。観戦用の列と関数が足されます。何度実行しても大丈夫です。
+1. https://supabase.com/dashboard/account/tokens を開き「Generate new token」。名前は `github-actions` などで作り、出てきた `sbp_` で始まる文字列をコピーする(この画面を閉じると二度と見られない)
+2. このリポジトリの「Settings」→ 左の「Secrets and variables」→「Actions」→「New repository secret」
+   - Name: `SUPABASE_ACCESS_TOKEN`
+   - Secret: 1でコピーした文字列
+3. 「Actions」タブ → 左の「サーバーの処理を更新する」→ 右の「Run workflow」→ 緑の「Run workflow」
+4. 2〜3分で緑のチェックが付けば完了。赤くなったらスクショを撮って Claude に見せてください
+
+このあとは、ルールのファイル(`js/engine.js` など)や `supabase/` を変えて push すると自動で更新されます。
+
+うまくいかないときの手作業: Supabase の「SQL Editor」に `supabase/schema.sql` を全部貼って「Run」すると、表と権限だけは入ります(何度実行しても大丈夫)。
 
 観戦する人は「ゲームスタート」→「観戦する」で、対局している部屋の6桁コードを入れます。観戦中は両方の手札が伏せたままで、場と取り札だけ見えます。上の「入替」で上下を入れ替えられます。
 
@@ -57,14 +64,29 @@
 | `js/scoring.js` | 役と点数の計算(小野木戸口ルール込み) |
 | `js/engine.js` | 配札・手番・こいこい・月の進行 |
 | `js/cpu.js` | CPUの考え方 |
-| `js/online.js` | Supabase(ログイン・部屋・同期・戦績) |
+| `js/online.js` | Supabase(ログイン・部屋・同期・戦績の読み込み) |
+| `js/serverlogic.js` | サーバーで使う処理(操作の判定、手札を伏せた盤面づくり) |
+| `supabase/functions/game/index.ts` | サーバー(Edge Function)。対局中の操作はすべてここを通る |
 | `js/app.js` | 画面と操作 |
 | `js/sound.js` | 効果音とBGM |
 | `js/config.js` | Supabase の接続先 |
 | `supabase/schema.sql` | Supabase の表と権限 |
 | `tools/fetch_cards.py` | 札の画像を取ってくるスクリプト |
+| `tools/copy_function_lib.sh` | ルールのファイルをサーバー用にコピーする(Actions が使う) |
 
-ルールのテストは `node tests/scoring.test.mjs` と `node tests/sim.test.mjs` で動きます。
+ルールのテストは `node tests/scoring.test.mjs` と `node tests/sim.test.mjs`、サーバーの処理のテストは `node tests/server.test.mjs` で動きます。
+
+## セキュリティのしくみ
+
+- 盤面を変えられるのはサーバーだけ。ブラウザからは「この札を出す」といった操作を送るだけで、サーバーが手番や手札を確かめてから盤面を進める
+- 本当の盤面(両者の手札と山札)はサーバーの中だけにあり、誰も読めない。プレイヤーに届くのは自分の手札だけが見える盤面、観戦者に届くのは両方の手札を伏せた盤面
+- サイコロと札の並びはサーバーが決める
+- 戦績はサーバーが対局の結果から書く。ブラウザからは書けない
+- ログインしていない人は部屋に入れない。部屋コードを10分に10回間違えると、しばらく入れなくなる
+- 部屋コードはサーバーが予測できない乱数で作る。新しく部屋を作ると、前に作った相手待ちの部屋は閉じる
+- ページで読み込んでよい場所を決めてあり(Content-Security-Policy)、決めた場所以外にはデータを送れない
+
+`js/config.js` の publishable key はブラウザに置く前提の鍵なので、公開されていても問題ありません。Supabase の「Advisors」→「Security Advisor」で、警告が出ていないかときどき確かめると安心です。
 
 ## 札の画像について
 

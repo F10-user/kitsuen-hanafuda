@@ -1,12 +1,13 @@
 // Supabase まわり: Googleログイン、プロフィール、部屋、リアルタイム同期、戦績。
-import { SUPABASE_URL, SUPABASE_ANON_KEY } from './config.js?v=20261120-0420';
+import { SUPABASE_URL, SUPABASE_ANON_KEY } from './config.js?v=20261122-2024';
 
 let sb = null;
 
 export async function initSupabase() {
   if (!SUPABASE_URL || !SUPABASE_ANON_KEY) return null;
   try {
-    const mod = await import('https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/+esm');
+    // 版を固定する(知らないうちに中身が変わらないように)
+    const mod = await import('https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.119.2/+esm');
     sb = mod.createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
       auth: { persistSession: true, autoRefreshToken: true, detectSessionInUrl: true },
     });
@@ -54,37 +55,36 @@ export async function saveProfile(uid, nickname, icon) {
   return data;
 }
 
-function randomCode() {
-  return String(Math.floor(Math.random() * 1000000)).padStart(6, '0');
+// 部屋はサーバーの関数で作る(コードもサーバーが決める)
+export async function createRoom(uid, settings) {
+  const { data, error } = await sb.rpc('create_room', { p_settings: settings });
+  if (error) throw new Error(error.message);
+  const room = Array.isArray(data) ? data[0] : data;
+  if (!room) throw new Error('部屋を作れませんでした。もう一度試してください');
+  return room;
 }
 
-export async function createRoom(uid, settings) {
-  for (let i = 0; i < 8; i += 1) {
-    const code = randomCode();
-    const { data, error } = await sb.from('rooms')
-      .insert({ code, host_id: uid, settings, status: 'waiting' })
-      .select().single();
-    if (!error) return data;
-    if (error.code !== '23505') throw error; // 23505 = コードがかぶった
-  }
-  throw new Error('部屋を作れませんでした。もう一度試してください');
+// 見つからないときは空で返ってくる
+function firstRoom(data) {
+  const room = Array.isArray(data) ? data[0] : data;
+  if (!room) throw new Error('その部屋は見つかりません');
+  return room;
 }
 
 export async function joinRoom(code) {
   const { data, error } = await sb.rpc('join_room', { p_code: code });
-  if (error) throw new Error(error.message.includes('not found') ? 'その部屋は見つかりません' : error.message);
-  return Array.isArray(data) ? data[0] : data;
+  if (error) throw new Error(error.message);
+  return firstRoom(data);
 }
 
 // 観戦として入る(見るだけ)
 export async function watchRoom(code) {
   const { data, error } = await sb.rpc('watch_room', { p_code: code });
   if (error) {
-    if (error.message.includes('not found')) throw new Error('その部屋は見つかりません');
     if (error.message.includes('watch_room')) throw new Error('観戦の準備がまだです(Supabaseで schema.sql をもう一度実行してください)');
     throw new Error(error.message);
   }
-  return Array.isArray(data) ? data[0] : data;
+  return firstRoom(data);
 }
 
 export async function leaveWatch(roomId) {
@@ -108,41 +108,55 @@ export async function findActiveRoom(uid) {
   return data[0] || null;
 }
 
-// 状態の書き込み。version が一致したときだけ書く(同時に書いても壊れないように)
-export async function writeState(room, state, extra = {}) {
-  const { data, error } = await sb.from('rooms')
-    .update({ state, version: room.version + 1, updated_at: new Date().toISOString(), ...extra })
-    .eq('id', room.id)
-    .eq('version', room.version)
-    .select();
+// 自分の盤面(自分の手札だけ見える)。対局が始まる前は null
+export async function getMyView(roomId, uid) {
+  const { data, error } = await sb.from('room_views').select('state')
+    .eq('room_id', roomId).eq('player_id', uid).maybeSingle();
   if (error) throw error;
-  return data && data[0] ? data[0] : null; // null なら誰かが先に書いた
+  return data ? data.state : null;
 }
 
+// 対局中の操作をサーバーに送る。サーバーがルールどおりか確かめて、新しい盤面を返す。
+//   type … 'start' 'deal' 'play' 'draw' 'choose' 'decide' 'ready' 'quit' 'answerQuit' 'rematch' 'leave'
+export async function gameAction(roomId, type, args = {}) {
+  const { data } = await sb.auth.getSession();
+  const token = data.session && data.session.access_token;
+  if (!token) throw new Error('ログインし直してください');
+  let res;
+  try {
+    res = await fetch(`${SUPABASE_URL}/functions/v1/game`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}`, apikey: SUPABASE_ANON_KEY },
+      body: JSON.stringify({ room: roomId, type, args }),
+    });
+  } catch (e) {
+    throw new Error('通信できませんでした');
+  }
+  let body = null;
+  try { body = await res.json(); } catch (e) { /* 中身なし */ }
+  if (res.status === 404 && !body) throw new Error('サーバーの準備がまだです(READMEの「サーバーの処理を更新する」を動かしてください)');
+  if (!res.ok || !body || body.error) throw new Error((body && body.error) || `通信できませんでした(${res.status})`);
+  return body; // { view, version }
+}
+
+// 相手待ちの部屋を閉じる
 export async function closeRoom(room) {
-  await sb.from('rooms').update({ status: 'closed' }).eq('id', room.id);
+  await sb.rpc('close_room', { p_room: room.id });
 }
 
-export function subscribeRoom(id, onChange) {
-  const ch = sb.channel('room-' + id)
+// 部屋の変更をリアルタイムで受け取る
+//   onRoom … 部屋の情報(相手が入った、観戦の人数、観戦用の盤面)
+//   onView … 自分の盤面(プレイヤーだけ。観戦者には届かない)
+export function subscribeRoom(id, onRoom, onView) {
+  let ch = sb.channel('room-' + id)
     .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'rooms', filter: `id=eq.${id}` },
-      (payload) => onChange(payload.new))
-    .subscribe();
+      (payload) => onRoom(payload.new));
+  if (onView) {
+    ch = ch.on('postgres_changes', { event: '*', schema: 'public', table: 'room_views', filter: `room_id=eq.${id}` },
+      (payload) => { if (payload.new && payload.new.state) onView(payload.new.state); });
+  }
+  ch.subscribe();
   return () => sb.removeChannel(ch);
-}
-
-export async function saveMatch(room, state, playerIds) {
-  const row = {
-    room_id: state.gameId || room.id, // 再戦しても対局ごとに1件ずつ残る
-    player0: playerIds[0],
-    player1: playerIds[1],
-    names: state.names,
-    months: state.settings.months,
-    scores: state.scores,
-    history: state.history,
-  };
-  const { error } = await sb.from('matches').insert(row);
-  if (error && error.code !== '23505') throw error; // 二重保存は無視
 }
 
 export async function listMatches() {

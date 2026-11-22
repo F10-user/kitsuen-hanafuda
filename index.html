@@ -4,11 +4,14 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
   <meta name="theme-color" content="#123d2a">
+  <!-- 読み込んでよい場所を決めておく(もし変なコードが紛れ込んでも、よそへ送ったり読み込んだりできないように) -->
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' https://cdn.jsdelivr.net; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data: blob:; media-src 'self' blob:; connect-src 'self' https://aivkyyfdwpurhfiglazp.supabase.co wss://aivkyyfdwpurhfiglazp.supabase.co; object-src 'none'; base-uri 'none'; form-action 'none'">
+  <meta name="referrer" content="strict-origin-when-cross-origin">
   <title>喫煙所花札</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Shippori+Mincho+B1:wght@600;800&family=Zen+Kaku+Gothic+New:wght@400;700&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="css/style.css?v=20261120-0420">
+  <link rel="stylesheet" href="css/style.css?v=20261122-2024">
 </head>
 <body>
   <div id="app">
@@ -17,6 +20,6 @@
     <div id="toast"></div>
   </div>
   <noscript>このゲームは JavaScript を使います。</noscript>
-  <script type="module" src="js/app.js?v=20261120-0420"></script>
+  <script type="module" src="js/app.js?v=20261122-2024"></script>
 </body>
 </html>

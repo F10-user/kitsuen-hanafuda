@@ -1,11 +1,11 @@
 // 画面と操作。タイトル → ログイン → メニュー → 対局 → リザルト。
-import { CARD, MONTH_PLANTS, TYPE_LABEL, cardImage, sortCards } from './cards.js?v=20261122-2024';
-import { YAKU_TABLE, RULE_NOTES, finalPoints, scoreCaptured, nearYaku } from './scoring.js?v=20261122-2024';
-import * as E from './engine.js?v=20261122-2024';
-import * as CPU from './cpu.js?v=20261122-2024';
-import * as S from './sound.js?v=20261122-2024';
-import * as O from './online.js?v=20261122-2024';
-import { VERSION } from './version.js?v=20261122-2024';
+import { CARD, MONTH_PLANTS, TYPE_LABEL, cardImage, sortCards } from './cards.js?v=20261125-1756';
+import { YAKU_TABLE, RULE_NOTES, finalPoints, scoreCaptured, nearYaku } from './scoring.js?v=20261125-1756';
+import * as E from './engine.js?v=20261125-1756';
+import * as CPU from './cpu.js?v=20261125-1756';
+import * as S from './sound.js?v=20261125-1756';
+import * as O from './online.js?v=20261125-1756';
+import { VERSION } from './version.js?v=20261125-1756';
 
 const $ = (sel, root = document) => root.querySelector(sel);
 const $$ = (sel, root = document) => [...root.querySelectorAll(sel)];
@@ -402,9 +402,20 @@ function newMatch(opts) {
   G = {
     mode: 'cpu', me: 0, state: null, room: null,
     sel: null, choose: null, busy: false, queue: Promise.resolve(), saved: false,
+    sendChain: Promise.resolve(), peek: null, desync: false, gen: 0,
     ...opts,
   };
+  if (G.mode === 'online' && !G.spectator) keepWarm(G);
   return G;
+}
+
+// 対局中はサーバーを時々起こしておく(しばらく間があいたあとの1手が遅くならないように)
+function keepWarm(g) {
+  O.warmUp();
+  const t = setInterval(() => {
+    if (G !== g) { clearInterval(t); return; }
+    if (document.visibilityState === 'visible') O.warmUp();
+  }, 45000);
 }
 
 // 状態の更新は順番に処理する(アニメーションが重ならないように)
@@ -414,38 +425,50 @@ function enqueue(fn) {
   return g.queue;
 }
 
-// 自分の操作。CPU対戦はその場で計算し、オンラインはサーバーに操作を送って判定してもらう。
-//   fn     … CPU対戦で使う(盤面 → 次の盤面)
+// 自分の操作。CPU対戦はその場で計算する。
+// オンラインも、自分の手札と場だけで決まる操作(出す・めくる・選ぶ・こいこい/上がり)は
+// 先に自分の画面で動かし、裏でサーバーに送る。サーバーの答えが違ったら盤面を取り直す。
+//   fn     … 盤面 → 次の盤面
 //   online … オンラインでサーバーに送る操作 { type, args }
+const AHEAD = ['play', 'draw', 'choose', 'decide'];
+
 async function act(fn, online) {
   if (!G || G.busy || G.spectator) return;
   if (G.mode === 'online') {
     const g = G;
+    const seen = g.state ? g.state.seq : -1;
     g.busy = true;
-    // 相手の動きを画面に反映し終えてから送る
+    const ahead = fn && AHEAD.includes(online.type);
+    if (online.type === 'draw') {
+      // めくる札は、手札を出した返事で教えてもらう。まだなら返事を待つ
+      deckWaiting(true);
+      await g.sendChain;
+    }
+    // 相手の動きを画面に反映し終えてから
     await g.queue;
     if (G !== g) return;
-    let res;
-    try {
-      res = await O.gameAction(g.room.id, online.type, online.args || {});
-    } catch (e) {
-      g.busy = false;
-      toast(e.message);
-      if (G !== g) return;
-      // 閉じた画面(こいこいの選択など)を出し直し、サーバーの盤面も取り直す
-      if (G.state && $('.game', screenEl)) {
-        renderGame(G.state);
-        if (!G.lock) showPhaseModal(G.state, { sound: false });
+    let local = null;
+    if (ahead && !g.desync) {
+      if (g.state.seq !== seen && online.type !== 'draw') { g.busy = false; return; } // 押したあとに盤面が変わった
+      let base = g.state;
+      if (online.type === 'draw') {
+        base = g.peek && g.peek.seq === base.seq ? { ...base, deck: [g.peek.card, ...base.deck.slice(1)] } : null;
       }
-      refreshView();
+      if (base) {
+        try { local = fn(base); } catch (e) { g.busy = false; toast(e.message); return; }
+      }
+    }
+    g.sel = null;
+    g.choose = null;
+    if (local) {
+      g.peek = null;
+      g.busy = false;
+      enqueue(() => applyState(local));
+      send(g, online);
       return;
     }
+    await send(g, online);
     g.busy = false;
-    if (G !== g) return;
-    G.sel = null;
-    G.choose = null;
-    if (res.version > g.room.version) g.room = { ...g.room, version: res.version };
-    receiveView(res.view);
     return;
   }
   let next;
@@ -455,13 +478,81 @@ async function act(fn, online) {
   enqueue(() => applyState(next));
 }
 
+// サーバーへの送信は1つずつ順番に(出す → めくる の順が入れ替わらないように)
+function send(g, online) {
+  const gen = g.gen;
+  const run = async () => {
+    // 前の操作がはねられて盤面を取り直したら、そのあとに先回りした操作は送らない
+    if (G !== g || g.desync || g.gen !== gen) return;
+    let res;
+    try {
+      res = await O.gameAction(g.room.id, online.type, online.args || {});
+    } catch (e) {
+      if (G !== g) return;
+      toast(e.message);
+      await resync(g);
+      return;
+    }
+    if (G !== g) return;
+    if (res.version > g.room.version) g.room = { ...g.room, version: res.version };
+    if (res.peek && res.view) g.peek = { seq: res.view.seq, card: res.peek };
+    receiveView(res.view);
+  };
+  g.sendChain = g.sendChain.then(run, run);
+  return g.sendChain;
+}
+
+// 山札を押してから札が届くまで、押したことがわかるようにする
+function deckWaiting(on) {
+  const d = $('.deck', screenEl);
+  if (d) d.classList.toggle('waiting', on);
+}
+
+// 先に動かした盤面とサーバーの盤面が同じ手か
+function sameMove(a, b) {
+  return a.phase === b.phase && a.turn === b.turn && JSON.stringify(a.events || []) === JSON.stringify(b.events || []);
+}
+
+// サーバーの盤面をそのまま表示し直す(アニメーションなし)
+function forceState(st) {
+  G.state = st;
+  G.sel = null;
+  G.choose = null;
+  G.peek = null;
+  renderGame(st);
+  if (!G.lock) showPhaseModal(st, { sound: false });
+}
+
+// 送った操作がはねられたとき: 先に動かした分を捨てて、サーバーの盤面に合わせる
+async function resync(g) {
+  g.desync = true;
+  g.gen += 1;
+  let st = null;
+  try { st = await O.getMyView(g.room.id, app.user.id); } catch (e) { /* 下で扱う */ }
+  if (G !== g) return;
+  await enqueue(() => {
+    if (G !== g) return;
+    g.desync = false;
+    g.busy = false;
+    if (st) forceState(st);
+    else if (G.state && $('.game', screenEl)) forceState(G.state);
+  });
+}
+
 // サーバーから届いた自分の盤面を反映する(自分の操作の返事と、相手の操作の知らせの両方)
 function receiveView(st) {
   if (!G || !st) return;
   const g = G;
   enqueue(async () => {
     if (G !== g) return;
-    if (G.state && st.seq <= G.state.seq) return; // もう反映した盤面
+    if (G.state && st.seq < G.state.seq) return; // もう反映した盤面
+    if (G.state && st.seq === G.state.seq) {
+      // 同じ盤面がもう一度届いたか、先に動かした手の答え合わせ
+      if (sameMove(st, G.state)) { G.state = st; return; }
+      if (g.desync || G.spectator) return;
+      forceState(st);
+      return;
+    }
     if (st.phase === 'dice' && G.state && G.state.phase === 'gameEnd') {
       await startRematch(st);
       return;
@@ -487,7 +578,10 @@ async function refreshView() {
 }
 
 document.addEventListener('visibilitychange', () => {
-  if (document.visibilityState === 'visible') refreshView();
+  if (document.visibilityState === 'visible') {
+    if (G && G.mode === 'online' && !G.spectator) O.warmUp();
+    refreshView();
+  }
 });
 
 // ---------------------------------------------------------------- CPU対戦

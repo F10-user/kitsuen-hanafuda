@@ -4,7 +4,8 @@
 //   ・ルールに合わない操作がはねられること
 //   ・戦績が対局の結果どおりに作られること
 import assert from 'node:assert/strict';
-import { applyAction, viewFor, effectsOf, cleanSettings, HIDDEN } from '../js/serverlogic.js';
+import { applyAction, viewFor, effectsOf, cleanSettings, peekFor, HIDDEN } from '../js/serverlogic.js';
+import * as E from '../js/engine.js';
 import { fieldOptions } from '../js/engine.js';
 
 function secretIds(full, viewer) {
@@ -140,5 +141,40 @@ for (let i = 0; i < 20; i += 1) {
 // 4. 設定の掃除
 assert.deepEqual(cleanSettings({ months: 99, sakeRule: 'x', guide: false, hack: 1 }), { months: 12, sakeRule: true, guide: false });
 assert.deepEqual(cleanSettings({ months: '3' }), { months: 3, sakeRule: true, guide: true });
+
+// 5. 先回り: 自分の盤面(と、引く本人にだけ教える山札の一番上)だけで計算した次の盤面が、
+//    サーバーの盤面を本人向けに伏せたものと同じ手になること
+{
+  const same = (a, b) => a.phase === b.phase && a.turn === b.turn && JSON.stringify(a.events) === JSON.stringify(b.events)
+    && JSON.stringify(a.hands) === JSON.stringify(b.hands) && JSON.stringify(a.field) === JSON.stringify(b.field)
+    && JSON.stringify(a.captured) === JSON.stringify(b.captured) && JSON.stringify(a.scores) === JSON.stringify(b.scores);
+  let checked = 0;
+  for (let i = 0; i < 30; i += 1) {
+    let full = applyAction(applyAction(null, 0, 'start', {}, ctx), 0, 'deal');
+    let peek = null;
+    while (full.phase !== 'gameEnd') {
+      if (full.phase === 'roundEnd') { full = applyAction(applyAction(full, 1, 'ready'), 0, 'ready'); continue; }
+      const p = full.turn;
+      // 山札の一番上は、引くことが決まった本人にしか返さない
+      assert.equal(peekFor(full, 1 - p), null);
+      if (full.phase !== 'draw') assert.equal(peekFor(full, p), null);
+      const view = viewFor(full, p);
+      const [type, args] = botMove(view, p);
+      let local;
+      if (type === 'play') local = E.playCard(view, p, args.card, args.target);
+      if (type === 'draw') local = E.drawCard({ ...view, deck: [peek, ...view.deck.slice(1)] }, p);
+      if (type === 'choose') local = E.chooseDraw(view, p, args.target);
+      if (type === 'decide') local = E.decide(view, p, args.choice);
+      full = applyAction(full, p, type, args);
+      const mine = viewFor(full, p);
+      assert.equal(local.seq, mine.seq);
+      assert.ok(same(local, mine), `先回りの盤面がサーバーと違う (${type})`);
+      peek = peekFor(full, p);
+      if (full.phase === 'draw') assert.equal(peek, full.deck[0]);
+      checked += 1;
+    }
+  }
+  assert.ok(checked > 1000);
+}
 
 console.log('server ok');

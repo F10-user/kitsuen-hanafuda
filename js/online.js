@@ -1,5 +1,5 @@
 // Supabase まわり: Googleログイン、プロフィール、部屋、リアルタイム同期、戦績。
-import { SUPABASE_URL, SUPABASE_ANON_KEY } from './config.js?v=20261122-2024';
+import { SUPABASE_URL, SUPABASE_ANON_KEY } from './config.js?v=20261125-1756';
 
 let sb = null;
 
@@ -136,7 +136,17 @@ export async function gameAction(roomId, type, args = {}) {
   try { body = await res.json(); } catch (e) { /* 中身なし */ }
   if (res.status === 404 && !body) throw new Error('サーバーの準備がまだです(READMEの「サーバーの処理を更新する」を動かしてください)');
   if (!res.ok || !body || body.error) throw new Error((body && body.error) || `通信できませんでした(${res.status})`);
-  return body; // { view, version }
+  return body; // { view, version, peek }
+}
+
+// サーバーを起こしておく(最初の1手が遅くならないように)。結果は使わない
+export function warmUp() {
+  if (!sb) return;
+  fetch(`${SUPABASE_URL}/functions/v1/game`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', apikey: SUPABASE_ANON_KEY },
+    body: JSON.stringify({ type: 'ping' }),
+  }).catch(() => {});
 }
 
 // 相手待ちの部屋を閉じる

@@ -426,6 +426,8 @@ input[type=range] { width: 120px; accent-color: var(--felt); }
 .deck.tap { cursor: pointer; animation: deckcall 1.1s ease-in-out infinite; }
 .deck.tap .card:last-child { box-shadow: 0 0 0 2px var(--glow), 0 0 16px 5px rgba(255,226,122,.8); }
 @keyframes deckcall { 50% { transform: translateY(-4px); } }
+/* 押してから札が届くまで */
+.deck.tap.waiting { animation: none; transform: translateY(-6px) scale(1.04); transition: transform .12s; }
 .field, .deck-zone { perspective: 700px; }
 
 /* リザルトから場を見る */

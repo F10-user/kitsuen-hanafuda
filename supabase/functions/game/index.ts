@@ -6,7 +6,7 @@
 //
 // lib/ の中身は js/ からコピーしたもの(GitHub Actions がデプロイ前にコピーする)。
 import { createClient } from 'npm:@supabase/supabase-js@2.119.2';
-import { applyAction, viewFor, effectsOf, isAction } from './lib/serverlogic.js';
+import { applyAction, viewFor, effectsOf, isAction, peekFor } from './lib/serverlogic.js';
 
 const ALLOWED_ORIGINS = ['https://f10-user.github.io'];
 
@@ -45,32 +45,53 @@ class HttpError extends Error {
   }
 }
 
-async function handle(req: Request) {
-  const jwt = (req.headers.get('Authorization') || '').replace(/^Bearer\s+/i, '');
-  if (!jwt) throw new HttpError(401, 'ログインしてください');
-  const { data: auth, error: authError } = await admin.auth.getUser(jwt);
-  if (authError || !auth?.user) throw new HttpError(401, 'ログインし直してください');
-  const uid = auth.user.id;
+// ログインしている人の id。鍵の形が新しければ通信なしで確かめられる(getClaims)
+async function userIdOf(jwt: string): Promise<string> {
+  const a = admin.auth as unknown as { getClaims?: (t: string) => Promise<{ data: { claims?: { sub?: string } } | null; error: unknown }> };
+  if (typeof a.getClaims === 'function') {
+    const { data, error } = await a.getClaims(jwt);
+    if (!error && data?.claims?.sub) return String(data.claims.sub);
+    throw new HttpError(401, 'ログインし直してください');
+  }
+  const { data, error } = await admin.auth.getUser(jwt);
+  if (error || !data?.user) throw new HttpError(401, 'ログインし直してください');
+  return data.user.id;
+}
 
+function readRoom(roomId: string) {
+  return admin.from('rooms').select('id, host_id, guest_id, settings, version, status').eq('id', roomId).maybeSingle();
+}
+
+function readSecret(roomId: string) {
+  return admin.from('room_secrets').select('state').eq('room_id', roomId).maybeSingle();
+}
+
+async function handle(req: Request) {
   let body: { room?: string; type?: string; args?: Record<string, unknown> };
   try { body = await req.json(); } catch (_e) { throw new HttpError(400, '送られた内容が読めません'); }
-  const roomId = String(body.room || '');
   const type = String(body.type || '');
+  // 対局の前などにサーバーを起こしておくための呼び出し(何もしない)
+  if (type === 'ping') return { pong: true };
+
+  const jwt = (req.headers.get('Authorization') || '').replace(/^Bearer\s+/i, '');
+  if (!jwt) throw new HttpError(401, 'ログインしてください');
+  const roomId = String(body.room || '');
   const args = body.args && typeof body.args === 'object' ? body.args : {};
   if (!UUID.test(roomId)) throw new HttpError(400, '部屋の指定が正しくありません');
   if (!isAction(type)) throw new HttpError(400, '知らない操作です');
 
+  // ログインの確認と盤面の読み込みを同時にやる(待ち時間を短くする)
+  const [uid, firstRoom, firstSecret] = await Promise.all([userIdOf(jwt), readRoom(roomId), readSecret(roomId)]);
+
   // ほかの操作と同時になったら、最新の盤面で数回やり直す
   for (let attempt = 0; attempt < 5; attempt += 1) {
-    const { data: room, error: roomError } = await admin.from('rooms')
-      .select('id, host_id, guest_id, settings, version, status').eq('id', roomId).maybeSingle();
+    const [{ data: room, error: roomError }, { data: secret, error: secretError }] = attempt === 0
+      ? [firstRoom, firstSecret]
+      : await Promise.all([readRoom(roomId), readSecret(roomId)]);
     if (roomError) throw roomError;
     if (!room) throw new HttpError(404, 'その部屋は見つかりません');
     const p = uid === room.host_id ? 0 : uid === room.guest_id ? 1 : -1;
     if (p < 0) throw new HttpError(403, 'この部屋のプレイヤーではありません');
-
-    const { data: secret, error: secretError } = await admin.from('room_secrets')
-      .select('state').eq('room_id', roomId).maybeSingle();
     if (secretError) throw secretError;
     const full = secret ? secret.state : null;
 
@@ -106,7 +127,8 @@ async function handle(req: Request) {
     });
     if (commitError) throw commitError;
     if (version === null || version === undefined) continue; // 先に誰かが書いた
-    return { view: viewFor(next, p), version };
+    // 山札の一番上は、それを引くことが決まった本人にだけ先に教える(引く演出をすぐ始められるように)
+    return { view: viewFor(next, p), version, peek: peekFor(next, p) };
   }
   throw new HttpError(409, '混み合っています。もう一度どうぞ');
 }

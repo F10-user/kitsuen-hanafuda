@@ -1,6 +1,6 @@
 // サーバー(Supabase Edge Function「game」)で使う処理。ブラウザでは読み込まない。
 // 本当の盤面はサーバーだけが持ち、プレイヤーには自分の手札だけ見える盤面を渡す。
-import * as E from './engine.js?v=20261122-2024';
+import * as E from './engine.js?v=20261125-1756';
 
 export const HIDDEN = '?';
 
@@ -20,6 +20,13 @@ export function viewFor(full, viewer) {
     };
   });
   return v;
+}
+
+// 山札の一番上。手札を出し終えて、次に引くことが決まっている本人にだけ返す。
+// 引く札は誰がいつタップしても変わらないので、先に知っても有利にはならない。
+export function peekFor(full, p) {
+  if (!full || full.quit || full.phase !== 'draw' || full.turn !== p || !full.deck || !full.deck.length) return null;
+  return full.deck[0];
 }
 
 // 部屋の設定を決まった形にする(変な値が入っていても対局は壊れない)
